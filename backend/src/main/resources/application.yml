@@ -3,9 +3,9 @@ spring:
     name: minidrive
 
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/minidrive}
-    username: ${DB_USERNAME:minidrive}
-    password: ${DB_PASSWORD:minidrive}
+    url: jdbc:postgresql://localhost:5432/minidrive
+    username: minidrive
+    password: minidrive
 
   jpa:
     hibernate:

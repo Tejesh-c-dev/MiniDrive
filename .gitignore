@@ -28,5 +28,5 @@ replay_pid*
 .env.*
 !.env.example
 
-# Maven build output
-/backend/target/
+**/target/
+

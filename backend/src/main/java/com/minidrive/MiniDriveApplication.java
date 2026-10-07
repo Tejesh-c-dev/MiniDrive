@@ -1,4 +1,4 @@
-package main.java.com.minidrive;
+package com.minidrive;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

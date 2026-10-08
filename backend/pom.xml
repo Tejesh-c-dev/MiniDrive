@@ -97,6 +97,12 @@
         <version>0.12.6</version>
         <scope>runtime</scope>
     </dependency>
+    <!-- MinIO object storage client (Phase 4) -->
+    <dependency>
+        <groupId>io.minio</groupId>
+        <artifactId>minio</artifactId>
+        <version>9.0.3</version>
+    </dependency>
 
     <dependency>
     <groupId>org.flywaydb</groupId>

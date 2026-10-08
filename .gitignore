@@ -30,3 +30,8 @@ replay_pid*
 
 **/target/
 
+# Node / frontend
+node_modules/
+dist/
+*.local
+

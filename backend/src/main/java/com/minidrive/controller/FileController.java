@@ -15,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.UUID;
@@ -32,7 +33,7 @@ public class FileController {
         this.fileService = fileService;
     }
 
-    @PostMapping("/api/files")
+    @PostMapping(path = "/api/files", consumes = "application/json")
     public ResponseEntity<FileUploadResponse> create(
             @Valid @RequestBody FileMetadataRequest request,
             Authentication authentication) {
@@ -44,6 +45,16 @@ public class FileController {
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(response);
+    }
+
+    @PostMapping(path = "/api/files", consumes = "multipart/form-data")
+    public ResponseEntity<FileUploadResponse> upload(
+            @RequestPart("file") MultipartFile file,
+            @RequestParam(name = "folderId", required = false) UUID folderId,
+            Authentication authentication) {
+
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(fileService.upload(authentication, file, folderId));
     }
 
     @GetMapping("/api/files")

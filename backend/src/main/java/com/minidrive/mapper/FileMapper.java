@@ -39,6 +39,10 @@ public final class FileMapper {
     }
 
     public static FileUploadResponse toUploadResponse(File file) {
+        return toUploadResponse(file, FileUploadResponse.UPLOAD_STATUS_PENDING);
+    }
+
+    public static FileUploadResponse toUploadResponse(File file, String uploadStatus) {
         return new FileUploadResponse(
                 file.getId(),
                 file.getName(),
@@ -50,7 +54,7 @@ public final class FileMapper {
                 file.getContentType(),
                 file.getSizeBytes(),
                 file.getChecksum(),
-                FileUploadResponse.UPLOAD_STATUS_PENDING,
+                uploadStatus,
                 file.getCreatedAt(),
                 file.getUpdatedAt());
     }

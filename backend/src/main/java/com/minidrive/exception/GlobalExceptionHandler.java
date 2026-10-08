@@ -54,6 +54,12 @@ public class GlobalExceptionHandler {
                         "error", ex.getMessage()));
     }
 
+    @ExceptionHandler(StorageException.class)
+    public ResponseEntity<?> handleStorage(StorageException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(Map.of("error", "File storage operation failed"));
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<?> handleValidation(
             MethodArgumentNotValidException ex) {

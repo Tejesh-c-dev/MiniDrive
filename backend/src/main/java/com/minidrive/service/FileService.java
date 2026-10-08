@@ -14,10 +14,17 @@ import com.minidrive.mapper.FileMapper;
 import com.minidrive.repository.FileRepository;
 import com.minidrive.repository.FolderRepository;
 import com.minidrive.repository.UserRepository;
+import com.minidrive.storage.StorageService;
+import com.minidrive.exception.StorageException;
 
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
 
 import java.util.List;
 import java.util.UUID;
@@ -26,6 +33,8 @@ import java.util.regex.Pattern;
 @Service
 public class FileService {
 
+    private static final Logger log = LoggerFactory.getLogger(FileService.class);
+
     private static final int MAX_NAME_LENGTH = 255;
     private static final Pattern CONTENT_TYPE_PATTERN =
             Pattern.compile("^[\\w.+-]+/[\\w.+-]+$");
@@ -33,14 +42,59 @@ public class FileService {
     private final FileRepository fileRepository;
     private final FolderRepository folderRepository;
     private final UserRepository userRepository;
+    private final StorageService storageService;
 
     public FileService(
             FileRepository fileRepository,
             FolderRepository folderRepository,
-            UserRepository userRepository) {
+            UserRepository userRepository,
+            StorageService storageService) {
         this.fileRepository = fileRepository;
         this.folderRepository = folderRepository;
         this.userRepository = userRepository;
+        this.storageService = storageService;
+    }
+
+    @Transactional
+    public FileUploadResponse upload(Authentication authentication, MultipartFile multipartFile, UUID folderId) {
+        User owner = currentUser(authentication);
+        if (multipartFile == null || multipartFile.isEmpty()) {
+            throw new IllegalArgumentException("File must not be empty");
+        }
+        long size = multipartFile.getSize();
+        if (size < 0) throw new IllegalArgumentException("Size in bytes must be non-negative");
+        String name = normalizeAndValidateName(multipartFile.getOriginalFilename());
+        String contentType = normalizeAndValidateContentType(
+                multipartFile.getContentType() == null || multipartFile.getContentType().isBlank()
+                        ? "application/octet-stream" : multipartFile.getContentType());
+        Folder folder = resolveOwnedFolder(owner, folderId);
+        assertNameAvailable(owner, folder, name);
+        String objectKey = owner.getId() + "/" + UUID.randomUUID() + "-" + sanitizeFilename(name);
+
+        try (var input = multipartFile.getInputStream()) {
+            storageService.upload(objectKey, input, size, contentType);
+        } catch (IOException e) {
+            throw new StorageException("Unable to read uploaded file", e);
+        }
+
+        try {
+            File file = new File(owner, folder, name, contentType, size, null);
+            file.setObjectKey(objectKey);
+            return FileMapper.toUploadResponse(fileRepository.saveAndFlush(file), "UPLOADED");
+        } catch (RuntimeException databaseFailure) {
+            try {
+                storageService.delete(objectKey);
+            } catch (RuntimeException cleanupFailure) {
+                log.error("Failed to clean up Silo object {} after metadata persistence failure", objectKey, cleanupFailure);
+                databaseFailure.addSuppressed(cleanupFailure);
+            }
+            throw databaseFailure;
+        }
+    }
+
+    private String sanitizeFilename(String name) {
+        String safe = name.replaceAll("[^A-Za-z0-9._-]", "_").replaceAll("\\.{2,}", "_");
+        return safe.isBlank() ? "file" : safe;
     }
 
     @Transactional

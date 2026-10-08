@@ -2,8 +2,10 @@ package com.minidrive.controller;
 
 import com.jayway.jsonpath.JsonPath;
 import com.minidrive.repository.FileRepository;
+import com.minidrive.entity.File;
 import com.minidrive.repository.FolderRepository;
 import com.minidrive.repository.UserRepository;
+import com.minidrive.storage.StorageService;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,6 +16,9 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import java.util.UUID;
 
@@ -23,6 +28,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -35,7 +41,8 @@ class FileControllerTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private UserRepository userRepository;
     @Autowired private FolderRepository folderRepository;
-    @Autowired private FileRepository fileRepository;
+    @MockitoSpyBean private FileRepository fileRepository;
+    @MockitoBean private StorageService storageService;
 
     @BeforeEach
     void cleanup() {
@@ -227,8 +234,70 @@ class FileControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"a.txt\",\"contentType\":\"text/plain\",\"sizeBytes\":1}"))
                 .andExpect(status().isUnauthorized());
+        mockMvc.perform(multipart("/api/files").file(new MockMultipartFile("file", "a.txt", "text/plain", new byte[]{1})))
+                .andExpect(status().isUnauthorized());
         mockMvc.perform(get("/api/files/" + UUID.randomUUID())).andExpect(status().isUnauthorized());
         mockMvc.perform(delete("/api/files/" + UUID.randomUUID())).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void authenticatedMultipartUploadPersistsMetadataForAuthenticatedOwner() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        byte[] bytes = "hello upload".getBytes();
+        mockMvc.perform(multipart("/api/files")
+                        .file(new MockMultipartFile("file", "report.pdf", "application/pdf", bytes))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("report.pdf"))
+                .andExpect(jsonPath("$.ownerId").value(userId("alice@test.com")))
+                .andExpect(jsonPath("$.contentType").value("application/pdf"))
+                .andExpect(jsonPath("$.sizeBytes").value(bytes.length))
+                .andExpect(jsonPath("$.objectKey").value(org.hamcrest.Matchers.not("report.pdf")));
+        var saved = fileRepository.findByOwnerIdAndFolderIdIsNull(UUID.fromString(userId("alice@test.com")));
+        org.junit.jupiter.api.Assertions.assertEquals(1, saved.size());
+        org.junit.jupiter.api.Assertions.assertTrue(saved.get(0).getObjectKey().contains("report.pdf"));
+        org.mockito.Mockito.verify(storageService).upload(
+                org.mockito.ArgumentMatchers.contains("report.pdf"),
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq((long) bytes.length),
+                org.mockito.ArgumentMatchers.eq("application/pdf"));
+    }
+
+    @Test
+    void emptyMultipartFileIsRejected() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        mockMvc.perform(multipart("/api/files")
+                        .file(new MockMultipartFile("file", "empty.txt", "text/plain", new byte[0]))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest());
+        org.junit.jupiter.api.Assertions.assertEquals(0, fileRepository.count());
+    }
+
+    @Test
+    void storageFailureDoesNotCreateMetadata() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        org.mockito.Mockito.doThrow(new com.minidrive.exception.StorageException("failed"))
+                .when(storageService).upload(org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong(),
+                        org.mockito.ArgumentMatchers.anyString());
+        mockMvc.perform(multipart("/api/files")
+                        .file(new MockMultipartFile("file", "x.txt", "text/plain", new byte[]{1}))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadGateway());
+        org.junit.jupiter.api.Assertions.assertEquals(0, fileRepository.count());
+    }
+
+    @Test
+    void metadataPersistenceFailureAttemptsObjectCleanup() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        org.mockito.Mockito.doThrow(new org.springframework.dao.DataIntegrityViolationException("simulated"))
+                .when(fileRepository).saveAndFlush(org.mockito.ArgumentMatchers.any(File.class));
+        org.junit.jupiter.api.Assertions.assertThrows(jakarta.servlet.ServletException.class,
+                () -> mockMvc.perform(multipart("/api/files")
+                        .file(new MockMultipartFile("file", "x.txt", "text/plain", new byte[]{1}))
+                        .header("Authorization", "Bearer " + token)));
+        org.mockito.Mockito.verify(storageService).delete(org.mockito.ArgumentMatchers.contains("x.txt"));
+        org.junit.jupiter.api.Assertions.assertEquals(0, fileRepository.count());
     }
 
     @Test

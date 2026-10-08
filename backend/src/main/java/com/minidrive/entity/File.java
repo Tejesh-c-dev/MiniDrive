@@ -9,6 +9,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 
 import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
@@ -21,7 +22,11 @@ import java.util.UUID;
  * (MinIO) in a later phase and are never loaded through this entity.
  */
 @Entity
-@Table(name = "files")
+@Table(
+        name = "files",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uq_files_object_key",
+                columnNames = "object_key"))
 public class File {
 
     @Id

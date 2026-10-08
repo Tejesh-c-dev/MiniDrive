@@ -18,6 +18,10 @@ public interface FileRepository extends JpaRepository<File, UUID> {
 
     Optional<File> findByIdAndOwnerId(UUID id, UUID ownerId);
 
+    Optional<File> findByObjectKey(String objectKey);
+
+    boolean existsByObjectKey(String objectKey);
+
     boolean existsByOwnerIdAndFolderIdIsNullAndName(UUID ownerId, String name);
 
     boolean existsByOwnerIdAndFolderIdAndName(UUID ownerId, UUID folderId, String name);

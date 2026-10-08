@@ -25,6 +25,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.InputStream;
 
 import java.util.List;
 import java.util.UUID;
@@ -223,10 +224,42 @@ public class FileService {
             UUID id) {
 
         User owner = currentUser(authentication);
-        File file = getOwnedFile(owner, id);
+        File file = fileRepository.findByIdAndOwnerId(id, owner.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("File not found"));
 
-        fileRepository.delete(file);
+        // Silo and PostgreSQL cannot share a transaction. Remove the stored object
+        // first so a storage failure leaves metadata intact and retryable. Silo's
+        // remove operation is safe when the object is already absent.
+        storageService.delete(file.getObjectKey());
+
+        try {
+            fileRepository.delete(file);
+            fileRepository.flush();
+        } catch (RuntimeException databaseFailure) {
+            // The object cannot be reconstructed without downloading and retaining
+            // its bytes, so report the failure and keep the rolled-back row for
+            // reconciliation instead of claiming deletion succeeded.
+            log.error("Silo object {} was deleted but metadata deletion failed for file {}",
+                    file.getObjectKey(), id, databaseFailure);
+            throw databaseFailure;
+        }
     }
+
+    @Transactional(readOnly = true)
+    public DownloadedFile download(Authentication authentication, UUID id) {
+        User owner = currentUser(authentication);
+        File file = fileRepository.findByIdAndOwnerId(id, owner.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("File not found"));
+        try {
+            return new DownloadedFile(file.getName(), file.getContentType(), file.getSizeBytes(),
+                    storageService.download(file.getObjectKey()));
+        } catch (StorageException e) {
+            log.error("Unable to download Silo object for file {}", id, e);
+            throw e;
+        }
+    }
+
+    public record DownloadedFile(String name, String contentType, long sizeBytes, InputStream inputStream) { }
 
     private User currentUser(Authentication authentication) {
 

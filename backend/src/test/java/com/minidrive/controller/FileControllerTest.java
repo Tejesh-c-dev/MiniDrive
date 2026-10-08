@@ -21,6 +21,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import java.util.UUID;
+import java.io.ByteArrayInputStream;
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.nullValue;
@@ -91,6 +92,72 @@ class FileControllerTest {
     }
 
     @Test
+    void listFilesIsIsolatedByAuthenticatedOwnerAndUsesCompactResponseDto() throws Exception {
+        String aliceToken = registerAndGetToken("Alice", "alice@test.com");
+        String bobToken = registerAndGetToken("Bob", "bob@test.com");
+        createFileAndGetId(aliceToken, "A1.txt", null, "text/plain", 11);
+        createFileAndGetId(aliceToken, "A2.txt", null, "text/plain", 22);
+        createFileAndGetId(bobToken, "B1.txt", null, "text/plain", 33);
+
+        mockMvc.perform(get("/api/files").header("Authorization", "Bearer " + aliceToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(2)))
+                .andExpect(jsonPath("$[0].name").value(org.hamcrest.Matchers.anyOf(
+                        org.hamcrest.Matchers.is("A1.txt"), org.hamcrest.Matchers.is("A2.txt"))))
+                .andExpect(jsonPath("$[*].name", org.hamcrest.Matchers.containsInAnyOrder("A1.txt", "A2.txt")))
+                .andExpect(jsonPath("$[*].name").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.hasItem("B1.txt"))))
+                .andExpect(jsonPath("$[0].id").isNotEmpty())
+                .andExpect(jsonPath("$[0].contentType").value("text/plain"))
+                .andExpect(jsonPath("$[0].sizeBytes").isNumber())
+                .andExpect(jsonPath("$[0].updatedAt").isNotEmpty())
+                .andExpect(jsonPath("$[0].objectKey").doesNotExist())
+                .andExpect(jsonPath("$[0].ownerId").doesNotExist());
+
+        mockMvc.perform(get("/api/files").header("Authorization", "Bearer " + bobToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].name").value("B1.txt"));
+
+        org.mockito.Mockito.verify(fileRepository).findByOwnerIdAndFolderIdIsNull(
+                UUID.fromString(userId("alice@test.com")));
+        org.mockito.Mockito.verify(fileRepository).findByOwnerIdAndFolderIdIsNull(
+                UUID.fromString(userId("bob@test.com")));
+    }
+
+    @Test
+    void listFilesReturnsEmptyArrayWhenOwnerHasNoFiles() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+
+        mockMvc.perform(get("/api/files").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(0)));
+    }
+
+    @Test
+    void listFilesByFolderUsesAuthenticatedOwnerScopedRepositoryQuery() throws Exception {
+        String aliceToken = registerAndGetToken("Alice", "alice@test.com");
+        String bobToken = registerAndGetToken("Bob", "bob@test.com");
+        String aliceFolder = createFolderAndGetId(aliceToken, "Alice folder");
+        String bobFolder = createFolderAndGetId(bobToken, "Bob folder");
+        createFileAndGetId(aliceToken, "inside.txt", aliceFolder, "text/plain", 10);
+        createFileAndGetId(aliceToken, "root.txt", null, "text/plain", 10);
+        createFileAndGetId(bobToken, "private.txt", bobFolder, "text/plain", 10);
+
+        mockMvc.perform(get("/api/files").param("folderId", aliceFolder)
+                        .header("Authorization", "Bearer " + aliceToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].name").value("inside.txt"));
+
+        org.mockito.Mockito.verify(fileRepository).findByOwnerIdAndFolderId(
+                UUID.fromString(userId("alice@test.com")), UUID.fromString(aliceFolder));
+
+        mockMvc.perform(get("/api/files").param("folderId", bobFolder)
+                        .header("Authorization", "Bearer " + aliceToken))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void listFilesInFolderReturnsOnlyDirectFiles() throws Exception {
         String token = registerAndGetToken("Alice", "alice@test.com");
         String folderId = createFolderAndGetId(token, "Documents");
@@ -139,13 +206,17 @@ class FileControllerTest {
     }
 
     @Test
-    void deleteFileMetadataRemovesRecord() throws Exception {
+    void deleteFileRemovesStorageObjectAndMetadata() throws Exception {
         String token = registerAndGetToken("Alice", "alice@test.com");
         String fileId = createFileAndGetId(token, "temp.txt", null, "text/plain", 1);
+        File file = fileRepository.findById(UUID.fromString(fileId)).orElseThrow();
 
         mockMvc.perform(delete("/api/files/" + fileId).header("Authorization", "Bearer " + token))
                 .andExpect(status().isNoContent());
 
+        org.mockito.Mockito.verify(storageService).delete(file.getObjectKey());
+        org.mockito.Mockito.verify(fileRepository).findByIdAndOwnerId(
+                UUID.fromString(fileId), UUID.fromString(userId("alice@test.com")));
         org.junit.jupiter.api.Assertions.assertEquals(0, fileRepository.count());
         mockMvc.perform(get("/api/files/" + fileId).header("Authorization", "Bearer " + token))
                 .andExpect(status().isNotFound());
@@ -156,6 +227,7 @@ class FileControllerTest {
         String aliceToken = registerAndGetToken("Alice", "alice@test.com");
         String bobToken = registerAndGetToken("Bob", "bob@test.com");
         String aliceFileId = createFileAndGetId(aliceToken, "secret.txt", null, "text/plain", 3);
+        String bobFileId = createFileAndGetId(bobToken, "B1.txt", null, "text/plain", 4);
 
         mockMvc.perform(get("/api/files/" + aliceFileId).header("Authorization", "Bearer " + bobToken))
                 .andExpect(status().isForbidden());
@@ -166,10 +238,59 @@ class FileControllerTest {
                         .content("{\"name\":\"hijacked.txt\"}"))
                 .andExpect(status().isForbidden());
 
+        var aliceFile = fileRepository.findById(UUID.fromString(aliceFileId)).orElseThrow();
+        var bobFile = fileRepository.findById(UUID.fromString(bobFileId)).orElseThrow();
         mockMvc.perform(delete("/api/files/" + aliceFileId).header("Authorization", "Bearer " + bobToken))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
+        mockMvc.perform(delete("/api/files/" + bobFileId).header("Authorization", "Bearer " + aliceToken))
+                .andExpect(status().isNotFound());
 
-        org.junit.jupiter.api.Assertions.assertEquals(1, fileRepository.count());
+        org.junit.jupiter.api.Assertions.assertEquals(2, fileRepository.count());
+        org.mockito.Mockito.verify(storageService, org.mockito.Mockito.never()).delete(aliceFile.getObjectKey());
+        org.mockito.Mockito.verify(storageService, org.mockito.Mockito.never()).delete(bobFile.getObjectKey());
+    }
+
+    @Test
+    void deleteMissingAndInvalidIdsAreHandledWithoutStorageCalls() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        mockMvc.perform(delete("/api/files/" + UUID.randomUUID()).header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(delete("/api/files/not-a-uuid").header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verify(storageService, org.mockito.Mockito.never())
+                .delete(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void storageDeleteFailurePreservesMetadataAndReturnsControlledError() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        String fileId = createFileAndGetId(token, "keep.txt", null, "text/plain", 1);
+        File file = fileRepository.findById(UUID.fromString(fileId)).orElseThrow();
+        org.mockito.Mockito.doThrow(new com.minidrive.exception.StorageException("private details"))
+                .when(storageService).delete(file.getObjectKey());
+
+        mockMvc.perform(delete("/api/files/" + fileId).header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.error").value("File storage operation failed"));
+
+        org.junit.jupiter.api.Assertions.assertTrue(fileRepository.findById(UUID.fromString(fileId)).isPresent());
+        org.mockito.Mockito.verify(fileRepository, org.mockito.Mockito.never()).delete(file);
+    }
+
+    @Test
+    void metadataDeleteFailureIsPropagatedAfterStorageDeletion() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        String fileId = createFileAndGetId(token, "db-failure.txt", null, "text/plain", 1);
+        File file = fileRepository.findById(UUID.fromString(fileId)).orElseThrow();
+        org.mockito.Mockito.doThrow(new org.springframework.dao.DataIntegrityViolationException("simulated"))
+                .when(fileRepository).flush();
+
+        org.junit.jupiter.api.Assertions.assertThrows(jakarta.servlet.ServletException.class,
+                () -> mockMvc.perform(delete("/api/files/" + fileId)
+                        .header("Authorization", "Bearer " + token)));
+
+        org.mockito.Mockito.verify(storageService).delete(file.getObjectKey());
+        org.junit.jupiter.api.Assertions.assertTrue(fileRepository.findById(UUID.fromString(fileId)).isPresent());
     }
 
     @Test
@@ -288,14 +409,97 @@ class FileControllerTest {
     }
 
     @Test
+    void downloadStreamsOwnedFileWithMetadataHeadersAndHidesOtherOwners() throws Exception {
+        String alice = registerAndGetToken("Alice", "alice@test.com");
+        String bob = registerAndGetToken("Bob", "bob@test.com");
+        String aliceId = createFileAndGetId(alice, "a\"report\r\n.txt", null, "text/plain", 5);
+        String bobId = createFileAndGetId(bob, "B1.txt", null, "application/pdf", 4);
+        var aFile = fileRepository.findById(UUID.fromString(aliceId)).orElseThrow();
+        var bFile = fileRepository.findById(UUID.fromString(bobId)).orElseThrow();
+        org.mockito.Mockito.when(storageService.download(aFile.getObjectKey()))
+                .thenReturn(new ByteArrayInputStream("hello".getBytes()));
+
+        var response = mockMvc.perform(get("/api/files/" + aliceId + "/download")
+                        .header("Authorization", "Bearer " + alice))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
+                        .contentType("text/plain"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                        .string("Content-Disposition", org.hamcrest.Matchers.containsString("a_report__.txt")))
+                .andReturn().getResponse();
+        org.junit.jupiter.api.Assertions.assertEquals("hello", response.getContentAsString());
+        org.mockito.Mockito.verify(storageService).download(aFile.getObjectKey());
+        org.mockito.Mockito.verify(fileRepository).findByIdAndOwnerId(
+                UUID.fromString(aliceId), UUID.fromString(userId("alice@test.com")));
+
+        mockMvc.perform(get("/api/files/" + bobId + "/download")
+                        .header("Authorization", "Bearer " + alice))
+                .andExpect(status().isNotFound());
+        org.mockito.Mockito.verify(storageService, org.mockito.Mockito.never()).download(bFile.getObjectKey());
+        org.mockito.Mockito.verify(fileRepository).findByIdAndOwnerId(
+                UUID.fromString(bobId), UUID.fromString(userId("alice@test.com")));
+    }
+
+    @Test
+    void downloadEncodesUnicodeFilenameInContentDisposition() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        String fileId = createFileAndGetId(token, "résumé-雪.txt", null, "text/plain", 5);
+        File file = fileRepository.findById(UUID.fromString(fileId)).orElseThrow();
+        org.mockito.Mockito.when(storageService.download(file.getObjectKey()))
+                .thenReturn(new ByteArrayInputStream("hello".getBytes()));
+
+        var result = mockMvc.perform(get("/api/files/" + fileId + "/download")
+                        .header("Authorization", "Bearer " + token))
+                .andReturn();
+        if (result.getRequest().isAsyncStarted()) {
+            result.getAsyncResult(5000);
+        }
+        org.junit.jupiter.api.Assertions.assertEquals(200, result.getResponse().getStatus());
+        String disposition = result.getResponse().getHeader("Content-Disposition");
+
+        org.junit.jupiter.api.Assertions.assertNotNull(disposition);
+        org.junit.jupiter.api.Assertions.assertTrue(disposition.contains("filename*=UTF-8''"), disposition);
+        org.junit.jupiter.api.Assertions.assertFalse(disposition.contains("\r"));
+        org.junit.jupiter.api.Assertions.assertFalse(disposition.contains("\n"));
+    }
+
+    @Test
+    void downloadRejectsUnauthenticatedInvalidAndMissingIdsAndControlsStorageFailure() throws Exception {
+        mockMvc.perform(get("/api/files/" + UUID.randomUUID() + "/download"))
+                .andExpect(status().isUnauthorized());
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        mockMvc.perform(get("/api/files/not-a-uuid/download").header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/files/" + UUID.randomUUID() + "/download")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+        String id = createFileAndGetId(token, "missing.txt", null, "text/plain", 3);
+        var file = fileRepository.findById(UUID.fromString(id)).orElseThrow();
+        org.mockito.Mockito.when(storageService.download(file.getObjectKey()))
+                .thenThrow(new com.minidrive.exception.StorageException("private storage details"));
+        mockMvc.perform(get("/api/files/" + id + "/download").header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadGateway())
+                .andExpect(jsonPath("$.error").value("File storage operation failed"));
+    }
+
+    @Test
     void metadataPersistenceFailureAttemptsObjectCleanup() throws Exception {
         String token = registerAndGetToken("Alice", "alice@test.com");
-        org.mockito.Mockito.doThrow(new org.springframework.dao.DataIntegrityViolationException("simulated"))
+        var databaseFailure = new org.springframework.dao.DataIntegrityViolationException("simulated");
+        var cleanupFailure = new com.minidrive.exception.StorageException("cleanup failed");
+        org.mockito.Mockito.doThrow(databaseFailure)
                 .when(fileRepository).saveAndFlush(org.mockito.ArgumentMatchers.any(File.class));
-        org.junit.jupiter.api.Assertions.assertThrows(jakarta.servlet.ServletException.class,
+        org.mockito.Mockito.doThrow(cleanupFailure).when(storageService)
+                .delete(org.mockito.ArgumentMatchers.anyString());
+        var thrown = org.junit.jupiter.api.Assertions.assertThrows(jakarta.servlet.ServletException.class,
                 () -> mockMvc.perform(multipart("/api/files")
                         .file(new MockMultipartFile("file", "x.txt", "text/plain", new byte[]{1}))
                         .header("Authorization", "Bearer " + token)));
+        Throwable cause = thrown;
+        while (cause != null && cause != databaseFailure) cause = cause.getCause();
+        org.junit.jupiter.api.Assertions.assertSame(databaseFailure, cause);
+        org.junit.jupiter.api.Assertions.assertArrayEquals(new Throwable[]{cleanupFailure},
+                databaseFailure.getSuppressed());
         org.mockito.Mockito.verify(storageService).delete(org.mockito.ArgumentMatchers.contains("x.txt"));
         org.junit.jupiter.api.Assertions.assertEquals(0, fileRepository.count());
     }
@@ -327,7 +531,9 @@ class FileControllerTest {
             String contentType,
             long sizeBytes) {
 
-        StringBuilder body = new StringBuilder("{\"name\":\"" + name + "\"");
+        String safeName = name.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\r", "\\r").replace("\n", "\\n");
+        StringBuilder body = new StringBuilder("{\"name\":\"" + safeName + "\"");
         if (folderId != null) {
             body.append(",\"folderId\":\"").append(folderId).append("\"");
         }

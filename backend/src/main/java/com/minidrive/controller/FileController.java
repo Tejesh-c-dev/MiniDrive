@@ -1,0 +1,102 @@
+package com.minidrive.controller;
+
+import com.minidrive.dto.file.FileMetadataRequest;
+import com.minidrive.dto.file.FileMetadataResponse;
+import com.minidrive.dto.file.FileMetadataUpdateRequest;
+import com.minidrive.dto.file.FileResponse;
+import com.minidrive.dto.file.FileUploadResponse;
+import com.minidrive.service.FileService;
+
+import jakarta.validation.Valid;
+
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+
+import org.springframework.security.core.Authentication;
+
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * File metadata endpoints only. Multipart upload, download streaming,
+ * presigned URLs, and object deletion belong to later phases.
+ */
+@RestController
+public class FileController {
+
+    private final FileService fileService;
+
+    public FileController(FileService fileService) {
+        this.fileService = fileService;
+    }
+
+    @PostMapping("/api/files")
+    public ResponseEntity<FileUploadResponse> create(
+            @Valid @RequestBody FileMetadataRequest request,
+            Authentication authentication) {
+
+        FileUploadResponse response = fileService.createMetadata(
+                authentication,
+                request);
+
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(response);
+    }
+
+    @GetMapping("/api/files")
+    public ResponseEntity<List<FileResponse>> list(
+            @RequestParam(name = "folderId", required = false) UUID folderId,
+            Authentication authentication) {
+
+        return ResponseEntity.ok(
+                fileService.listInFolder(
+                        authentication,
+                        folderId));
+    }
+
+    @GetMapping("/api/files/{id}")
+    public ResponseEntity<FileMetadataResponse> get(
+            @PathVariable UUID id,
+            Authentication authentication) {
+
+        return ResponseEntity.ok(
+                fileService.get(authentication, id));
+    }
+
+    @GetMapping("/api/folders/{folderId}/files")
+    public ResponseEntity<List<FileResponse>> listInFolder(
+            @PathVariable UUID folderId,
+            Authentication authentication) {
+
+        return ResponseEntity.ok(
+                fileService.listInOwnedFolder(
+                        authentication,
+                        folderId));
+    }
+
+    @PatchMapping("/api/files/{id}")
+    public ResponseEntity<FileMetadataResponse> update(
+            @PathVariable UUID id,
+            @Valid @RequestBody FileMetadataUpdateRequest request,
+            Authentication authentication) {
+
+        return ResponseEntity.ok(
+                fileService.update(
+                        authentication,
+                        id,
+                        request));
+    }
+
+    @DeleteMapping("/api/files/{id}")
+    public ResponseEntity<Void> delete(
+            @PathVariable UUID id,
+            Authentication authentication) {
+
+        fileService.delete(authentication, id);
+
+        return ResponseEntity.noContent().build();
+    }
+}

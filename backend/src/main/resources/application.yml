@@ -1,11 +1,14 @@
 spring:
+  config:
+    import: optional:file:../.env[.properties]
+
   application:
     name: minidrive
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/minidrive
-    username: minidrive
-    password: minidrive
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
 
   jpa:
     hibernate:
@@ -13,5 +16,8 @@ spring:
     show-sql: false
     open-in-view: false
 
+jwt:
+  secret: ${JWT_SECRET:change-this-development-secret-key-to-at-least-32-characters}
+  expiration: 86400000
 server:
   port: 8080

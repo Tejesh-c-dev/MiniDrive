@@ -5,12 +5,12 @@ services:
     container_name: minidrive-postgres
 
     environment:
-      POSTGRES_DB: minidrive
-      POSTGRES_USER: minidrive
-      POSTGRES_PASSWORD: minidrive
+      POSTGRES_DB: ${POSTGRES_DB:-minidrive}
+      POSTGRES_USER: ${POSTGRES_USER:-minidrive}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-minidrive}
 
     ports:
-      - "5432:5432"
+      - "127.0.0.1:55432:5432"
 
     volumes:
       - postgres_data:/var/lib/postgresql/data

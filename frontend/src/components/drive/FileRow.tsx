@@ -5,10 +5,16 @@ interface FileRowProps {
   file: FileSummary;
   disabled?: boolean;
   onDownload: (file: FileSummary) => void;
+  onRename: (file: FileSummary) => void;
 }
 
 /** A single file in the listing: name, type, size, last updated, download. */
-export default function FileRow({ file, disabled, onDownload }: FileRowProps) {
+export default function FileRow({
+  file,
+  disabled,
+  onDownload,
+  onRename,
+}: FileRowProps) {
   return (
     <li
       className="flex items-center gap-4 px-4 py-3 hover:bg-gray-50"
@@ -29,6 +35,14 @@ export default function FileRow({ file, disabled, onDownload }: FileRowProps) {
       <span className="hidden w-40 shrink-0 text-right text-xs text-gray-500 md:block">
         {formatUpdatedAt(file.updatedAt)}
       </span>
+      <button
+        type="button"
+        onClick={() => onRename(file)}
+        data-testid="file-rename"
+        className="shrink-0 rounded-md border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100"
+      >
+        Rename
+      </button>
       <button
         type="button"
         disabled={disabled}

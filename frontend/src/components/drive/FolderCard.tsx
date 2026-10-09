@@ -4,10 +4,11 @@ import { formatUpdatedAt } from '@/utils/format';
 
 interface FolderCardProps {
   folder: FolderSummary;
+  onRename: (folder: FolderSummary) => void;
 }
 
 /** A compact, clickable folder tile used in the folder grid. */
-export default function FolderCard({ folder }: FolderCardProps) {
+export default function FolderCard({ folder, onRename }: FolderCardProps) {
   return (
     <Link
       to={`/drive/folders/${folder.id}`}
@@ -25,6 +26,19 @@ export default function FolderCard({ folder }: FolderCardProps) {
           Updated {formatUpdatedAt(folder.updatedAt)}
         </span>
       </span>
+      <button
+        type="button"
+        onClick={(event) => {
+          // Keep the rename click from also navigating into the folder.
+          event.preventDefault();
+          event.stopPropagation();
+          onRename(folder);
+        }}
+        data-testid="folder-rename"
+        className="shrink-0 rounded-md border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100"
+      >
+        Rename
+      </button>
     </Link>
   );
 }

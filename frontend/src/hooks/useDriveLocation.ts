@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { getFolder } from '@/api/folders';
 import { toApiError } from '@/api/errors';
@@ -22,6 +22,8 @@ export function useDriveLocation(): {
   location: DriveLocation;
   loading: boolean;
   error: string | null;
+  /** Patch a crumb's displayed name in place (folder rename in current path). */
+  updateCrumbName: (id: string, name: string) => void;
 } {
   const params = useParams<{ folderId?: string }>();
   const routeFolderId = params.folderId ?? null;
@@ -101,9 +103,25 @@ export function useDriveLocation(): {
     ]);
   }, [parentChain, currentName, routeFolderId]);
 
+  // Patch a crumb's displayed name in place (e.g. after renaming a folder
+  // currently in the path) without re-walking the folder chain.
+  const updateCrumbName = useCallback(
+    (id: string, name: string) => {
+      if (id === routeFolderId) {
+        setCurrentName(name);
+      } else {
+        setParentChain((chain) =>
+          chain.map((crumb) => (crumb.id === id ? { ...crumb, name } : crumb)),
+        );
+      }
+    },
+    [routeFolderId],
+  );
+
   return {
     location: { folderId: routeFolderId, crumbs },
     loading,
     error,
+    updateCrumbName,
   };
 }

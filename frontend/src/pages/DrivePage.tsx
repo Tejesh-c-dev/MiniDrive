@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { listFiles, downloadFile } from '@/api/files';
-import { listFolders } from '@/api/folders';
+import { listFiles, downloadFile, uploadFile, renameFile } from '@/api/files';
+import { listFolders, createFolder, renameFolder } from '@/api/folders';
 import { useAuth, logout } from '@/services/authStore';
 import { useDriveLocation } from '@/hooks/useDriveLocation';
 import type { ApiError } from '@/types/api';
@@ -12,16 +12,20 @@ import ErrorState from '@/components/drive/ErrorState';
 import FileRow from '@/components/drive/FileRow';
 import FolderCard from '@/components/drive/FolderCard';
 import LoadingState from '@/components/drive/LoadingState';
+import NewFolderDialog from '@/components/drive/NewFolderDialog';
+import RenameDialog from '@/components/drive/RenameDialog';
+import UploadState from '@/components/drive/UploadState';
 
 /**
  * Drive dashboard (Phase 5.3): browser of the user's folders and files.
  * Location is URL-driven (/drive, /drive/folders/:folderId); both lists are
- * re-fetched per location. No upload/rename/delete/share here — later phases.
+ * re-fetched per location. Upload goes to the current folder (or root). No
+ * rename/delete/share here — later phases.
  */
 export default function DrivePage() {
   const navigate = useNavigate();
   const { authenticated } = useAuth();
-  const { location, error: trailError } = useDriveLocation();
+  const { location, error: trailError, updateCrumbName } = useDriveLocation();
   const { folderId, crumbs } = location;
 
   const [folders, setFolders] = useState<FolderSummary[] | null>(null);
@@ -30,11 +34,87 @@ export default function DrivePage() {
   const [filesError, setFilesError] = useState<ApiError | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<ApiError | null>(null);
+  const [uploadingName, setUploadingName] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [uploadError, setUploadError] = useState<ApiError | null>(null);
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  const [renamingFolder, setRenamingFolder] = useState<FolderSummary | null>(null);
+  const [renamingFile, setRenamingFile] = useState<FileSummary | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handlePickFile = () => {
+    setUploadError(null);
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    // Reset the input so picking the same file again re-fires the change event.
+    event.target.value = '';
+    if (!file || uploadingName !== null) return;
+    setUploadingName(file.name);
+    setUploadProgress(null);
+    setUploadError(null);
+    try {
+      await uploadFile(file, folderId ?? undefined, setUploadProgress);
+      refresh();
+    } catch (err: unknown) {
+      setUploadError(err as ApiError);
+    } finally {
+      setUploadingName(null);
+      setUploadProgress(null);
+    }
+  };
 
   const [refreshTick, setRefreshTick] = useState(0);
   const refresh = useCallback(() => {
     setRefreshTick((tick) => tick + 1);
   }, []);
+
+  // Rename the targeted folder via the shared API module (the dialog handles
+  // trimming/validation; submit rejections surface its error). On success the
+  // crumb trail is patched in place if the folder is part of the current path.
+  const renamingTarget = renamingFolder;
+  const renamingFileTarget = renamingFile;
+  const handleRenameFolder = useCallback(
+    async (name: string) => {
+      if (renamingTarget === null) return;
+      await renameFolder(renamingTarget.id, name);
+      refresh();
+      updateCrumbName(renamingTarget.id, name);
+    },
+    [renamingTarget, refresh, updateCrumbName],
+  );
+
+  // Rename the targeted file via the shared API module.
+  const handleRenameFile = useCallback(
+    async (name: string) => {
+      if (renamingFileTarget === null) return;
+      await renameFile(renamingFileTarget.id, name);
+      refresh();
+    },
+    [renamingFileTarget, refresh],
+  );
+
+  // Create the folder in the current location via the shared API module (the
+  // dialog handles trimming/validation; submit rejections surface its error).
+  const handleCreateFolder = useCallback(
+    async (name: string) => {
+      if (creatingFolder) return; // guard against duplicate submissions
+      setCreatingFolder(true);
+      try {
+        await createFolder(name, folderId ?? undefined);
+        refresh();
+        setNewFolderOpen(false); // stay in the current folder
+      } finally {
+        setCreatingFolder(false);
+      }
+    },
+    [creatingFolder, folderId, refresh],
+  );
 
   // Fetch folders and files for the current location.
   useEffect(() => {
@@ -101,6 +181,7 @@ export default function DrivePage() {
     folders.length === 0 &&
     files.length === 0;
   const downloading = downloadingId !== null;
+  const uploading = uploadingName !== null;
 
   return (
     <section className="w-full max-w-5xl pt-6 pb-16">
@@ -111,6 +192,24 @@ export default function DrivePage() {
           </h1>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handlePickFile}
+            disabled={uploading}
+            data-testid="upload-button"
+            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {uploading ? 'Uploading…' : 'Upload'}
+          </button>
+          <button
+            type="button"
+            onClick={() => setNewFolderOpen(true)}
+            disabled={creatingFolder || uploading}
+            data-testid="new-folder-button"
+            className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            New Folder
+          </button>
           <button
             type="button"
             onClick={refresh}
@@ -133,6 +232,16 @@ export default function DrivePage() {
       <div className="mt-4">
         <Breadcrumbs crumbs={crumbs} />
       </div>
+
+      {/* Hidden file input drives the upload flow; clicking the Upload button
+          opens the native picker, results flow into handleFileSelected. */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        onChange={handleFileSelected}
+        data-testid="upload-input"
+      />
 
       {trailError && (
         <div className="mt-4">
@@ -175,7 +284,11 @@ export default function DrivePage() {
                   </h2>
                   <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {folders.map((folder) => (
-                      <FolderCard key={folder.id} folder={folder} />
+                      <FolderCard
+                        key={folder.id}
+                        folder={folder}
+                        onRename={setRenamingFolder}
+                      />
                     ))}
                   </div>
                 </section>
@@ -193,6 +306,7 @@ export default function DrivePage() {
                         file={file}
                         disabled={downloading}
                         onDownload={handleDownload}
+                        onRename={setRenamingFile}
                       />
                     ))}
                   </ul>
@@ -220,10 +334,56 @@ export default function DrivePage() {
         </>
       )}
 
+      {uploadError && (
+        <p
+          role="alert"
+          data-testid="upload-error"
+          className="mt-4 text-sm font-medium text-red-600"
+        >
+          {uploadError.message}
+        </p>
+      )}
+      {uploadingName !== null && (
+        <div className="mt-4">
+          <UploadState
+            fileName={uploadingName}
+            progressPercent={uploadProgress}
+          />
+        </div>
+      )}
+
       {downloadError && (
         <p role="alert" className="mt-4 text-sm font-medium text-red-600">
           {downloadError.message}
         </p>
+      )}
+
+      {newFolderOpen && (
+        <NewFolderDialog
+          open={newFolderOpen}
+          onCreate={handleCreateFolder}
+          onClose={() => setNewFolderOpen(false)}
+        />
+      )}
+
+      {renamingFolder && (
+        <RenameDialog
+          open={renamingFolder !== null}
+          initialName={renamingFolder.name}
+          entityLabel="folder"
+          onRename={handleRenameFolder}
+          onClose={() => setRenamingFolder(null)}
+        />
+      )}
+
+      {renamingFile && (
+        <RenameDialog
+          open={renamingFile !== null}
+          initialName={renamingFile.name}
+          entityLabel="file"
+          onRename={handleRenameFile}
+          onClose={() => setRenamingFile(null)}
+        />
       )}
 
       <p className="mt-10 text-xs text-gray-400">

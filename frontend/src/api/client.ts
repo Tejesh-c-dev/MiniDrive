@@ -16,10 +16,15 @@ if (!API_BASE_URL) {
 /**
  * Centralized Axios client. All backend calls go through this instance so
  * interceptors (JWT auth headers, 401 handling) are applied in one place.
+ *
+ * Content-Type is intentionally left unset: Axios sets application/json
+ * automatically for object bodies, while leaving multipart/form-data uploads
+ * alone so the browser can add the boundary. Forcing a global JSON header here
+ * made Axios serialise FormData uploads to JSON, which routed them to the
+ * metadata endpoint instead of the multipart upload endpoint.
  */
 export const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
-  headers: { 'Content-Type': 'application/json' },
 });
 
 /**

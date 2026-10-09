@@ -44,16 +44,19 @@ public class FileService {
     private final FolderRepository folderRepository;
     private final UserRepository userRepository;
     private final StorageService storageService;
+    private final FileAccessService fileAccessService;
 
     public FileService(
             FileRepository fileRepository,
             FolderRepository folderRepository,
             UserRepository userRepository,
-            StorageService storageService) {
+            StorageService storageService,
+            FileAccessService fileAccessService) {
         this.fileRepository = fileRepository;
         this.folderRepository = folderRepository;
         this.userRepository = userRepository;
         this.storageService = storageService;
+        this.fileAccessService = fileAccessService;
     }
 
     @Transactional
@@ -163,9 +166,15 @@ public class FileService {
             Authentication authentication,
             UUID id) {
 
-        User owner = currentUser(authentication);
+        User caller = currentUser(authentication);
+        FileAccessService.FileAccess access = fileAccessService.resolve(caller, id);
 
-        return FileMapper.toMetadataResponse(getOwnedFile(owner, id));
+        if (!access.hasAccess()) {
+            throw new ForbiddenException(
+                    "You do not have access to this file");
+        }
+
+        return FileMapper.toMetadataResponse(access.file());
     }
 
     @Transactional
@@ -174,16 +183,38 @@ public class FileService {
             UUID id,
             FileMetadataUpdateRequest request) {
 
-        User owner = currentUser(authentication);
-        File file = getOwnedFile(owner, id);
+        User caller = currentUser(authentication);
+        FileAccessService.FileAccess access = fileAccessService.resolve(caller, id);
+
+        if (!access.hasAccess()) {
+            throw new ForbiddenException(
+                    "You do not have access to this file");
+        }
+
+        if (!access.canEdit()) {
+            throw new ForbiddenException(
+                    "You do not have permission to modify this file");
+        }
+
+        File file = access.file();
+        User fileOwner = file.getOwner();
 
         Folder targetFolder = file.getFolder();
         String targetName = file.getName();
         boolean changed = false;
 
         if (request.getFolderId() != null) {
-            targetFolder = getOwnedFolder(owner, request.getFolderId());
-            if (!targetFolder.equals(file.getFolder())) {
+            boolean sameFolder = file.getFolder() != null
+                    && file.getFolder().getId().equals(request.getFolderId());
+
+            if (!sameFolder) {
+                // Moving a file is an ownership-level change and stays owner-only;
+                // editors may rename but must not relocate another user's file.
+                if (!access.isOwner()) {
+                    throw new ForbiddenException(
+                            "You do not have permission to move this file");
+                }
+                targetFolder = getOwnedFolder(fileOwner, request.getFolderId());
                 changed = true;
             }
         }
@@ -197,7 +228,7 @@ public class FileService {
         }
 
         if (changed) {
-            assertNameAvailable(owner, targetFolder, targetName);
+            assertNameAvailable(fileOwner, targetFolder, targetName);
         }
 
         file.setFolder(targetFolder);
@@ -223,9 +254,19 @@ public class FileService {
             Authentication authentication,
             UUID id) {
 
-        User owner = currentUser(authentication);
-        File file = fileRepository.findByIdAndOwnerId(id, owner.getId())
-                .orElseThrow(() -> new ResourceNotFoundException("File not found"));
+        User caller = currentUser(authentication);
+        FileAccessService.FileAccess access = fileAccessService.resolve(caller, id);
+
+        if (!access.hasAccess()) {
+            throw new ResourceNotFoundException("File not found");
+        }
+
+        if (!access.isOwner()) {
+            throw new ForbiddenException(
+                    "You do not have permission to delete this file");
+        }
+
+        File file = access.file();
 
         // Silo and PostgreSQL cannot share a transaction. Remove the stored object
         // first so a storage failure leaves metadata intact and retryable. Silo's
@@ -247,9 +288,15 @@ public class FileService {
 
     @Transactional(readOnly = true)
     public DownloadedFile download(Authentication authentication, UUID id) {
-        User owner = currentUser(authentication);
-        File file = fileRepository.findByIdAndOwnerId(id, owner.getId())
-                .orElseThrow(() -> new ResourceNotFoundException("File not found"));
+        User caller = currentUser(authentication);
+        FileAccessService.FileAccess access = fileAccessService.resolve(caller, id);
+
+        if (!access.hasAccess()) {
+            throw new ResourceNotFoundException("File not found");
+        }
+
+        File file = access.file();
+
         try {
             return new DownloadedFile(file.getName(), file.getContentType(), file.getSizeBytes(),
                     storageService.download(file.getObjectKey()));
@@ -266,20 +313,6 @@ public class FileService {
         return userRepository.findByEmail(authentication.getName())
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "User not found"));
-    }
-
-    private File getOwnedFile(User owner, UUID id) {
-
-        File file = fileRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "File not found"));
-
-        if (!file.getOwner().getId().equals(owner.getId())) {
-            throw new ForbiddenException(
-                    "You do not have access to this file");
-        }
-
-        return file;
     }
 
     private Folder getOwnedFolder(User owner, UUID id) {

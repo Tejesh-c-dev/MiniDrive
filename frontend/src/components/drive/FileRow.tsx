@@ -6,14 +6,22 @@ interface FileRowProps {
   disabled?: boolean;
   onDownload: (file: FileSummary) => void;
   onRename: (file: FileSummary) => void;
+  onShare: (file: FileSummary) => void;
 }
 
-/** A single file in the listing: name, type, size, last updated, download. */
+/**
+ * A single file in the listing: name, type, size, last updated, rename,
+ * download, and share. The active listing only contains files the current
+ * user owns (the list endpoint is owner-scoped), so the Share control is
+ * shown for every row; the backend remains authoritative and rejects
+ * permission management for non-owners regardless of the UI.
+ */
 export default function FileRow({
   file,
   disabled,
   onDownload,
   onRename,
+  onShare,
 }: FileRowProps) {
   return (
     <li
@@ -42,6 +50,14 @@ export default function FileRow({
         className="shrink-0 rounded-md border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100"
       >
         Rename
+      </button>
+      <button
+        type="button"
+        onClick={() => onShare(file)}
+        data-testid="file-share"
+        className="shrink-0 rounded-md border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100"
+      >
+        Share
       </button>
       <button
         type="button"

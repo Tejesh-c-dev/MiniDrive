@@ -14,13 +14,19 @@ import FolderCard from '@/components/drive/FolderCard';
 import LoadingState from '@/components/drive/LoadingState';
 import NewFolderDialog from '@/components/drive/NewFolderDialog';
 import RenameDialog from '@/components/drive/RenameDialog';
+import ShareDialog from '@/components/sharing/ShareDialog';
 import UploadState from '@/components/drive/UploadState';
 
 /**
  * Drive dashboard (Phase 5.3): browser of the user's folders and files.
  * Location is URL-driven (/drive, /drive/folders/:folderId); both lists are
- * re-fetched per location. Upload goes to the current folder (or root). No
- * rename/delete/share here — later phases.
+ * re-fetched per location. Upload goes to the current folder (or root).
+ * Rename is available for folders/files; Share (Phase 6.2) opens a dialog to
+ * manage a file's collaborators. Delete arrives in a later phase.
+ *
+ * The file list is owner-scoped by the backend, so every listed file belongs
+ * to the current user and is safe to offer sharing controls for; the backend
+ * still enforces owner-only access for permission management.
  */
 export default function DrivePage() {
   const navigate = useNavigate();
@@ -41,6 +47,7 @@ export default function DrivePage() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [renamingFolder, setRenamingFolder] = useState<FolderSummary | null>(null);
   const [renamingFile, setRenamingFile] = useState<FileSummary | null>(null);
+  const [sharingFile, setSharingFile] = useState<FileSummary | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handlePickFile = () => {
@@ -307,6 +314,7 @@ export default function DrivePage() {
                         disabled={downloading}
                         onDownload={handleDownload}
                         onRename={setRenamingFile}
+                        onShare={setSharingFile}
                       />
                     ))}
                   </ul>
@@ -383,6 +391,14 @@ export default function DrivePage() {
           entityLabel="file"
           onRename={handleRenameFile}
           onClose={() => setRenamingFile(null)}
+        />
+      )}
+
+      {sharingFile && (
+        <ShareDialog
+          open={sharingFile !== null}
+          file={sharingFile}
+          onClose={() => setSharingFile(null)}
         />
       )}
 

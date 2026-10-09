@@ -6,14 +6,12 @@ import com.minidrive.dto.file.FileMetadataUpdateRequest;
 import com.minidrive.dto.file.FileResponse;
 import com.minidrive.dto.file.FileUploadResponse;
 import com.minidrive.service.FileService;
+import com.minidrive.util.DownloadResponses;
 
 import jakarta.validation.Valid;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.http.ContentDisposition;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import org.springframework.security.core.Authentication;
@@ -23,7 +21,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.UUID;
-import java.nio.charset.StandardCharsets;
 
 /**
  * File metadata and object transfer endpoints.
@@ -86,22 +83,12 @@ public class FileController {
             @PathVariable UUID id,
             Authentication authentication) {
         FileService.DownloadedFile file = fileService.download(authentication, id);
-        StreamingResponseBody body = output -> {
-            try (var input = file.inputStream()) {
-                input.transferTo(output);
-            }
-        };
-        String safeFilename = file.name().replaceAll("[\\r\\n\\\"\\\\/\\p{Cntrl}]", "_");
-        if (safeFilename.isBlank()) safeFilename = "download";
-        ContentDisposition disposition = safeFilename.codePoints().anyMatch(character -> character > 0x7f)
-                ? ContentDisposition.attachment().filename(safeFilename, StandardCharsets.UTF_8).build()
-                : ContentDisposition.attachment().filename(safeFilename).build();
-        return ResponseEntity.ok()
-                .contentType(MediaType.parseMediaType(file.contentType()))
-                .contentLength(file.sizeBytes())
-                .header(HttpHeaders.CONTENT_DISPOSITION,
-                        disposition.toString())
-                .body(body);
+
+        return DownloadResponses.attachment(
+                file.name(),
+                file.contentType(),
+                file.sizeBytes(),
+                file.inputStream());
     }
 
     @GetMapping("/api/folders/{folderId}/files")

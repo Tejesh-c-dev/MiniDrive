@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { listFiles, downloadFile, uploadFile, renameFile } from '@/api/files';
+import {
+  listFiles,
+  downloadFile,
+  uploadFile,
+  renameFile,
+  replaceFileContent,
+} from '@/api/files';
 import { listFolders, createFolder, renameFolder } from '@/api/folders';
 import { useAuth, logout } from '@/services/authStore';
 import { useDriveLocation } from '@/hooks/useDriveLocation';
@@ -15,6 +21,7 @@ import LoadingState from '@/components/drive/LoadingState';
 import NewFolderDialog from '@/components/drive/NewFolderDialog';
 import RenameDialog from '@/components/drive/RenameDialog';
 import ShareDialog from '@/components/sharing/ShareDialog';
+import VersionHistoryDialog from '@/components/files/VersionHistoryDialog';
 import UploadState from '@/components/drive/UploadState';
 
 /**
@@ -48,7 +55,13 @@ export default function DrivePage() {
   const [renamingFolder, setRenamingFolder] = useState<FolderSummary | null>(null);
   const [renamingFile, setRenamingFile] = useState<FileSummary | null>(null);
   const [sharingFile, setSharingFile] = useState<FileSummary | null>(null);
+  const [historyFile, setHistoryFile] = useState<FileSummary | null>(null);
+  const [replaceTarget, setReplaceTarget] = useState<FileSummary | null>(null);
+  const [replacingId, setReplacingId] = useState<string | null>(null);
+  const [replaceError, setReplaceError] = useState<ApiError | null>(null);
+  const [replaceNotice, setReplaceNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
 
   const handlePickFile = () => {
     setUploadError(null);
@@ -80,6 +93,48 @@ export default function DrivePage() {
   const refresh = useCallback(() => {
     setRefreshTick((tick) => tick + 1);
   }, []);
+
+  // Open the native picker for a content replacement, remembering which file
+  // the selected bytes will be applied to. The backend is the sole authority on
+  // whether the caller may edit; the picker is only offered for files canEdit
+  // already permits.
+  const handlePickReplacement = (file: FileSummary) => {
+    setReplaceTarget(file);
+    setReplaceError(null);
+    setReplaceNotice(null);
+    replaceInputRef.current?.click();
+  };
+
+  // Submit the picked file to POST /api/files/{id}/content (never the file
+  // creation endpoint). The input is reset first so the same local file can be
+  // selected again on a later attempt.
+  const handleReplacementSelected = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    const target = replaceTarget;
+    if (!file || target === null || replacingId !== null) return;
+    setReplacingId(target.id);
+    setReplaceError(null);
+    setReplaceNotice(null);
+    try {
+      const result = await replaceFileContent(target.id, file);
+      // Only report success once the server confirms it. Refreshing re-fetches
+      // the listing so the row's currentVersion (and size/updatedAt) reflect
+      // the new revision immediately; the history dialog loads fresh too.
+      setReplaceNotice(
+        `${target.name} updated to version ${result.currentVersion}.`,
+      );
+      refresh();
+    } catch (err: unknown) {
+      // A failure leaves the existing file state untouched (no refresh) and
+      // surfaces the server's message.
+      setReplaceError(err as ApiError);
+    } finally {
+      setReplacingId(null);
+    }
+  };
 
   // Rename the targeted folder via the shared API module (the dialog handles
   // trimming/validation; submit rejections surface its error). On success the
@@ -189,6 +244,13 @@ export default function DrivePage() {
     files.length === 0;
   const downloading = downloadingId !== null;
   const uploading = uploadingName !== null;
+  // Prefer the freshest metadata for the open history dialog so currentVersion
+  // reflects a just-completed restore; fall back to the clicked snapshot.
+  const historyTarget =
+    historyFile !== null
+      ? files?.find((candidate) => candidate.id === historyFile.id) ??
+        historyFile
+      : null;
 
   return (
     <section className="w-full max-w-5xl pt-6 pb-16">
@@ -248,6 +310,16 @@ export default function DrivePage() {
         className="hidden"
         onChange={handleFileSelected}
         data-testid="upload-input"
+      />
+
+      {/* Separate hidden input for content replacement; the target file is
+          captured when the Replace content action is chosen. */}
+      <input
+        ref={replaceInputRef}
+        type="file"
+        className="hidden"
+        onChange={handleReplacementSelected}
+        data-testid="replace-input"
       />
 
       {trailError && (
@@ -312,9 +384,16 @@ export default function DrivePage() {
                         key={file.id}
                         file={file}
                         disabled={downloading}
+                        // The listing is owner-scoped, so every listed file is
+                        // editable by the current user; the backend still
+                        // enforces edit permission for replacements.
+                        canEdit
+                        replacing={replacingId === file.id}
                         onDownload={handleDownload}
                         onRename={setRenamingFile}
                         onShare={setSharingFile}
+                        onHistory={setHistoryFile}
+                        onReplace={handlePickReplacement}
                       />
                     ))}
                   </ul>
@@ -360,6 +439,34 @@ export default function DrivePage() {
         </div>
       )}
 
+      {replacingId !== null && (
+        <p
+          role="status"
+          data-testid="replace-state"
+          className="mt-4 text-sm font-medium text-blue-700"
+        >
+          Replacing content…
+        </p>
+      )}
+      {replaceError && (
+        <p
+          role="alert"
+          data-testid="replace-error"
+          className="mt-4 text-sm font-medium text-red-600"
+        >
+          {replaceError.message}
+        </p>
+      )}
+      {replaceNotice !== null && (
+        <p
+          role="status"
+          data-testid="replace-notice"
+          className="mt-4 text-sm font-medium text-green-700"
+        >
+          {replaceNotice}
+        </p>
+      )}
+
       {downloadError && (
         <p role="alert" className="mt-4 text-sm font-medium text-red-600">
           {downloadError.message}
@@ -399,6 +506,19 @@ export default function DrivePage() {
           open={sharingFile !== null}
           file={sharingFile}
           onClose={() => setSharingFile(null)}
+        />
+      )}
+
+      {historyTarget !== null && (
+        <VersionHistoryDialog
+          open={historyTarget !== null}
+          file={historyTarget}
+          // The drive listing is owner-scoped, so every listed file is owned
+          // by the current user and may be restored. The backend still enforces
+          // edit permission for restores independently of this flag.
+          canEdit
+          onClose={() => setHistoryFile(null)}
+          onRestored={refresh}
         />
       )}
 

@@ -27,6 +27,13 @@ public class FileUploadResponse {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
+    /**
+     * Latest stored content version after this operation, derived from the
+     * file's version history. {@code 0} means metadata is registered but no
+     * content has been stored yet.
+     */
+    private int currentVersion;
+
     public FileUploadResponse(
             UUID id,
             String name,
@@ -38,7 +45,8 @@ public class FileUploadResponse {
             String checksum,
             String uploadStatus,
             LocalDateTime createdAt,
-            LocalDateTime updatedAt) {
+            LocalDateTime updatedAt,
+            int currentVersion) {
         this.id = id;
         this.name = name;
         this.folderId = folderId;
@@ -50,6 +58,7 @@ public class FileUploadResponse {
         this.uploadStatus = uploadStatus;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
+        this.currentVersion = currentVersion;
     }
 
     public UUID getId() {
@@ -94,5 +103,9 @@ public class FileUploadResponse {
 
     public LocalDateTime getUpdatedAt() {
         return updatedAt;
+    }
+
+    public int getCurrentVersion() {
+        return currentVersion;
     }
 }

@@ -12,6 +12,28 @@ export interface FileSummary {
   contentType: string;
   sizeBytes: number;
   updatedAt: string;
+  /**
+   * Latest stored content version derived from the file's version history.
+   * 0 means the file has no stored content yet (metadata-only).
+   */
+  currentVersion: number;
+}
+
+/**
+ * One entry in a file's version history. Mirrors the backend
+ * com.minidrive.dto.file.FileVersionResponse — the storage object key is
+ * deliberately never exposed to the browser.
+ */
+export interface FileVersion {
+  id: string;
+  versionNumber: number;
+  originalFilename: string;
+  contentType: string;
+  sizeBytes: number;
+  createdById: string | null;
+  createdByName: string | null;
+  createdByEmail: string | null;
+  createdAt: string;
 }
 
 /** Mirrors FolderResponse — folder summary returned by folder endpoints. */

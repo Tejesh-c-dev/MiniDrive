@@ -19,6 +19,12 @@ public class FileMetadataResponse {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
+    /**
+     * Latest stored content version, derived from the file's version history.
+     * {@code 0} means the file has no stored content yet (metadata-only).
+     */
+    private int currentVersion;
+
     public FileMetadataResponse(
             UUID id,
             String name,
@@ -29,7 +35,8 @@ public class FileMetadataResponse {
             Long sizeBytes,
             String checksum,
             LocalDateTime createdAt,
-            LocalDateTime updatedAt) {
+            LocalDateTime updatedAt,
+            int currentVersion) {
         this.id = id;
         this.name = name;
         this.folderId = folderId;
@@ -40,6 +47,7 @@ public class FileMetadataResponse {
         this.checksum = checksum;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
+        this.currentVersion = currentVersion;
     }
 
     public UUID getId() {
@@ -80,5 +88,9 @@ public class FileMetadataResponse {
 
     public LocalDateTime getUpdatedAt() {
         return updatedAt;
+    }
+
+    public int getCurrentVersion() {
+        return currentVersion;
     }
 }

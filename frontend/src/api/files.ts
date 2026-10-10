@@ -4,6 +4,7 @@
  *
  * Backend endpoints used:
  * - POST /api/files (multipart/form-data) -> FileUploadResponse (201)
+ * - POST /api/files/{id}/content (multipart/form-data) -> FileUploadResponse
  * - GET /api/files[?folderId=<uuid>] -> FileResponse[]
  * - GET /api/files/{id}/download     -> binary stream (attachment)
  * - PATCH /api/files/{id}            -> FileMetadataResponse
@@ -30,6 +31,11 @@ export interface FileUploadResponse {
   uploadStatus: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Latest stored content version after this operation, derived from the
+   * file's version history (0 = metadata only, no stored content yet).
+   */
+  currentVersion: number;
 }
 
 /** List files, optionally scoped to a folder (omit folderId for drive root). */
@@ -65,6 +71,43 @@ export async function uploadFile(
     }
     const { data } = await apiClient.post<FileUploadResponse>(
       '/api/files',
+      formData,
+      {
+        onUploadProgress: (event: AxiosProgressEvent) => {
+          if (event.total && event.total > 0) {
+            onUploadProgress?.(
+              Math.min(100, (event.loaded / event.total) * 100),
+            );
+          }
+        },
+      },
+    );
+    return data;
+  } catch (error: unknown) {
+    throw toApiError(error);
+  }
+}
+
+/**
+ * Replace an existing file's content without creating a separate logical file.
+ * Sends the replacement as the same mandatory "file" multipart part the upload
+ * endpoint expects to POST /api/files/{id}/content; the file's id, name, folder
+ * and permissions are unchanged and the server records a new immutable version.
+ *
+ * Axios sets the multipart boundary automatically for the FormData body, so
+ * Content-Type is deliberately not set here (matching uploadFile). The normal
+ * file-creation endpoint is never used for this operation.
+ */
+export async function replaceFileContent(
+  id: string,
+  file: globalThis.File,
+  onUploadProgress?: (percent: number) => void,
+): Promise<FileUploadResponse> {
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await apiClient.post<FileUploadResponse>(
+      `/api/files/${id}/content`,
       formData,
       {
         onUploadProgress: (event: AxiosProgressEvent) => {

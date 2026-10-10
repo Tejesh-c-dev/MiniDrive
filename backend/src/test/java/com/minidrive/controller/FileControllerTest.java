@@ -2,6 +2,7 @@ package com.minidrive.controller;
 
 import com.jayway.jsonpath.JsonPath;
 import com.minidrive.repository.FileRepository;
+import com.minidrive.repository.FileVersionRepository;
 import com.minidrive.entity.File;
 import com.minidrive.repository.FolderRepository;
 import com.minidrive.repository.UserRepository;
@@ -43,10 +44,12 @@ class FileControllerTest {
     @Autowired private UserRepository userRepository;
     @Autowired private FolderRepository folderRepository;
     @MockitoSpyBean private FileRepository fileRepository;
+    @Autowired private FileVersionRepository fileVersionRepository;
     @MockitoBean private StorageService storageService;
 
     @BeforeEach
     void cleanup() {
+        fileVersionRepository.deleteAll();
         fileRepository.deleteAll();
         folderRepository.deleteAll();
         userRepository.deleteAll();

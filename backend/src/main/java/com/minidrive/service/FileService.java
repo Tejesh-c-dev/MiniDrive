@@ -20,6 +20,7 @@ import com.minidrive.repository.FolderRepository;
 import com.minidrive.repository.UserRepository;
 import com.minidrive.storage.StorageService;
 import com.minidrive.exception.StorageException;
+import com.minidrive.util.StorageKeys;
 
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
@@ -109,11 +110,6 @@ public class FileService {
             }
             throw databaseFailure;
         }
-    }
-
-    private String sanitizeFilename(String name) {
-        String safe = name.replaceAll("[^A-Za-z0-9._-]", "_").replaceAll("\\.{2,}", "_");
-        return safe.isBlank() ? "file" : safe;
     }
 
     @Transactional
@@ -355,6 +351,81 @@ public class FileService {
             }
             throw databaseFailure;
         }
+    }
+
+    /**
+     * Persists a brand-new logical file whose bytes were already written to
+     * storage by a chunked-upload finalization, recording it as version 1 with
+     * the same semantics as the classic single-shot upload.
+     *
+     * <p>Storage was written by the caller before this method runs because the
+     * object write and the database write cannot share a transaction. This
+     * method is therefore only the metadata half of the flow: it must run inside
+     * the caller's completion transaction (the ambient transaction is joined) so
+     * that a failure rolls the metadata back and lets the caller remove the
+     * orphaned object. Only server-generated inputs are accepted; the object key
+     * and version number never come from the client.</p>
+     */
+    @Transactional
+    public FileUploadResponse persistStoredNewFile(
+            User owner,
+            Folder folder,
+            String name,
+            String contentType,
+            long sizeBytes,
+            String objectKey,
+            User createdBy) {
+
+        assertNameAvailable(owner, folder, name);
+
+        File file = new File(owner, folder, name, contentType, sizeBytes, null);
+        file.setObjectKey(objectKey);
+        File saved = fileRepository.saveAndFlush(file);
+        // First content for this logical file is version 1, matching the
+        // single-shot upload flow.
+        fileVersionRepository.saveAndFlush(
+                new FileVersion(saved, 1, objectKey, name, contentType, sizeBytes, createdBy));
+        return FileMapper.toUploadResponse(saved, "UPLOADED", 1);
+    }
+
+    /**
+     * Advances an existing file to newly stored content and records the result
+     * as the next immutable version, matching the multipart replacement flow:
+     * the file keeps its identity, name, folder, owner and permissions, only its
+     * current content pointer moves forward, and prior versions keep their own
+     * objects untouched.
+     *
+     * <p>As with {@link #persistStoredNewFile}, the object was already written
+     * and this metadata half must run inside the caller's completion
+     * transaction.</p>
+     */
+    @Transactional
+    public FileUploadResponse persistStoredReplacement(
+            File targetFile,
+            String originalFilename,
+            String contentType,
+            long sizeBytes,
+            String objectKey,
+            User createdBy) {
+
+        int versionNumber = nextVersionNumber(targetFile.getId());
+
+        targetFile.setObjectKey(objectKey);
+        targetFile.setContentType(contentType);
+        targetFile.setSizeBytes(sizeBytes);
+        targetFile.setChecksum(null);
+
+        File saved = fileRepository.saveAndFlush(targetFile);
+        fileVersionRepository.saveAndFlush(new FileVersion(
+                saved,
+                versionNumber,
+                objectKey,
+                originalFilename,
+                contentType,
+                sizeBytes,
+                createdBy));
+
+        return FileMapper.toUploadResponse(saved, "UPLOADED", versionNumber);
     }
 
     /**
@@ -669,7 +740,7 @@ public class FileService {
      */
     private String buildObjectKey(UUID ownerId, String originalFilename) {
 
-        return ownerId + "/" + UUID.randomUUID() + "-" + sanitizeFilename(originalFilename);
+        return StorageKeys.contentObjectKey(ownerId, originalFilename);
     }
 
     /**

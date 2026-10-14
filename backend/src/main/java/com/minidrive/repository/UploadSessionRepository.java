@@ -2,7 +2,12 @@ package com.minidrive.repository;
 
 import com.minidrive.entity.UploadSession;
 
+import jakarta.persistence.LockModeType;
+
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -17,6 +22,19 @@ public interface UploadSessionRepository extends JpaRepository<UploadSession, UU
      * session's existence.
      */
     Optional<UploadSession> findByIdAndOwnerId(UUID id, UUID ownerId);
+
+    /**
+     * Owner-scoped lookup that takes a row-level write lock, used to serialize
+     * concurrent completion attempts for the same session. The second attempt
+     * blocks until the first commits, then observes the session as
+     * {@code COMPLETED} and returns the already-produced result instead of
+     * creating a second file or version.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from UploadSession s where s.id = :id and s.owner.id = :ownerId")
+    Optional<UploadSession> findByIdAndOwnerIdForUpdate(
+            @Param("id") UUID id,
+            @Param("ownerId") UUID ownerId);
 
     List<UploadSession> findByOwnerId(UUID ownerId);
 

@@ -1,5 +1,6 @@
 package com.minidrive.controller;
 
+import com.minidrive.dto.file.FileUploadResponse;
 import com.minidrive.dto.upload.ChunkUploadResponse;
 import com.minidrive.dto.upload.CreateUploadSessionRequest;
 import com.minidrive.dto.upload.UploadSessionResponse;
@@ -28,8 +29,8 @@ import java.util.UUID;
  *
  * <p>Every endpoint is authenticated and owner-scoped: the acting user is taken
  * from the principal, never from the request, and a session belonging to
- * another user resolves to {@code 404}. These endpoints only stage chunk bytes;
- * assembling them into a file is a later phase.</p>
+ * another user resolves to {@code 404}. Chunk endpoints stage bytes into
+ * server-private keys; {@code complete} assembles them into a real file.</p>
  */
 @RestController
 public class UploadController {
@@ -78,6 +79,23 @@ public class UploadController {
 
         return ResponseEntity.ok(
                 uploadSessionService.ingestChunk(authentication, sessionId, index, body));
+    }
+
+    /**
+     * Finalizes a fully staged session into a real file (Phase 8.4).
+     *
+     * <p>Returns the same {@link FileUploadResponse} contract as the single-shot
+     * upload and replacement flows. Completing an already-completed session
+     * returns the recorded result rather than creating a second file or version,
+     * so a client that loses the response can safely retry.</p>
+     */
+    @PostMapping("/api/uploads/{sessionId}/complete")
+    public ResponseEntity<FileUploadResponse> complete(
+            @PathVariable UUID sessionId,
+            Authentication authentication) {
+
+        return ResponseEntity.ok(
+                uploadSessionService.complete(authentication, sessionId));
     }
 
     /** Aborts an eligible session and removes all of its staging objects. */

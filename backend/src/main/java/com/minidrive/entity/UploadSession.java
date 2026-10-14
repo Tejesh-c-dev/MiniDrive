@@ -84,6 +84,23 @@ public class UploadSession {
     @Column(name = "expires_at", nullable = false)
     private LocalDateTime expiresAt;
 
+    /**
+     * The file this session produced once it completed, or {@code null} while
+     * the upload is still in progress. Set in the same transaction as the
+     * {@link File}/{@link FileVersion} rows so a completed session always points
+     * at a fully persisted result, and used to answer a repeated completion
+     * idempotently.
+     */
+    @Column(name = "completed_file_id")
+    private UUID completedFileId;
+
+    /** The version produced by completion; {@code null} until the session completes. */
+    @Column(name = "completed_version_number")
+    private Integer completedVersionNumber;
+
+    @Column(name = "completed_at")
+    private LocalDateTime completedAt;
+
     public UploadSession() {
     }
 
@@ -162,8 +179,32 @@ public class UploadSession {
         return expiresAt;
     }
 
+    public UUID getCompletedFileId() {
+        return completedFileId;
+    }
+
+    public Integer getCompletedVersionNumber() {
+        return completedVersionNumber;
+    }
+
+    public LocalDateTime getCompletedAt() {
+        return completedAt;
+    }
+
     public void setStatus(UploadSessionStatus status) {
         this.status = status;
+    }
+
+    /**
+     * Records the file/version this session produced and moves it to
+     * {@link UploadSessionStatus#COMPLETED}. Callers must only invoke this once
+     * the file and its version are durably persisted in the same transaction.
+     */
+    public void markCompleted(UUID completedFileId, int completedVersionNumber) {
+        this.status = UploadSessionStatus.COMPLETED;
+        this.completedFileId = completedFileId;
+        this.completedVersionNumber = completedVersionNumber;
+        this.completedAt = LocalDateTime.now();
     }
 
     @jakarta.persistence.PrePersist

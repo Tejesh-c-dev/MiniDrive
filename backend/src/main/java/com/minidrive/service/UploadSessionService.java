@@ -1,5 +1,6 @@
 package com.minidrive.service;
 
+import com.minidrive.dto.file.FileUploadResponse;
 import com.minidrive.dto.upload.ChunkUploadResponse;
 import com.minidrive.dto.upload.CreateUploadSessionRequest;
 import com.minidrive.dto.upload.UploadSessionResponse;
@@ -13,6 +14,7 @@ import com.minidrive.entity.User;
 import com.minidrive.exception.ForbiddenException;
 import com.minidrive.exception.ResourceNotFoundException;
 import com.minidrive.exception.StorageException;
+import com.minidrive.mapper.FileMapper;
 import com.minidrive.mapper.UploadSessionMapper;
 import com.minidrive.repository.FileRepository;
 import com.minidrive.repository.FolderRepository;
@@ -20,6 +22,7 @@ import com.minidrive.repository.UploadChunkRepository;
 import com.minidrive.repository.UploadSessionRepository;
 import com.minidrive.repository.UserRepository;
 import com.minidrive.storage.StorageService;
+import com.minidrive.util.StorageKeys;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -27,16 +30,20 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.SequenceInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Enumeration;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
@@ -47,9 +54,9 @@ import java.util.regex.Pattern;
  *
  * <p>A session is initialized from declared metadata; the server then fixes the
  * chunk size and derives the exact chunk count, and clients upload each chunk
- * independently. This service deliberately stops short of assembling bytes into
- * a {@link File} or {@code FileVersion} -- that finalization is Phase 8.4 -- so
- * it never touches file metadata or version history.</p>
+ * independently. Finalization (Phase 8.4) assembles the staged chunks into a
+ * real {@link File} and records the result through the same file/version
+ * lifecycle used by the single-shot upload and replacement flows.</p>
  *
  * <p>All identity comes from the authenticated principal, and every lookup is
  * scoped by owner so one user can never see or mutate another's session.</p>
@@ -86,6 +93,17 @@ public class UploadSessionService {
     private final UserRepository userRepository;
     private final StorageService storageService;
     private final FileAccessService fileAccessService;
+    private final FileService fileService;
+
+    /**
+     * Programmatic transaction boundary for the completion phases. Completion
+     * must interleave short database transactions with object-storage I/O that
+     * cannot participate in them, and the metadata step has to run inside the
+     * same transaction as the session's status change; a {@link TransactionTemplate}
+     * expresses those discrete boundaries without relying on self-injection to
+     * cross a proxy.
+     */
+    private final TransactionTemplate transactionTemplate;
 
     public UploadSessionService(
             UploadSessionRepository uploadSessionRepository,
@@ -94,7 +112,9 @@ public class UploadSessionService {
             FileRepository fileRepository,
             UserRepository userRepository,
             StorageService storageService,
-            FileAccessService fileAccessService) {
+            FileAccessService fileAccessService,
+            FileService fileService,
+            PlatformTransactionManager transactionManager) {
         this.uploadSessionRepository = uploadSessionRepository;
         this.uploadChunkRepository = uploadChunkRepository;
         this.folderRepository = folderRepository;
@@ -102,6 +122,8 @@ public class UploadSessionService {
         this.userRepository = userRepository;
         this.storageService = storageService;
         this.fileAccessService = fileAccessService;
+        this.fileService = fileService;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     /**
@@ -244,6 +266,386 @@ public class UploadSessionService {
         uploadChunkRepository.deleteBySessionId(session.getId());
         session.setStatus(UploadSessionStatus.ABORTED);
         uploadSessionRepository.saveAndFlush(session);
+    }
+
+    /**
+     * Finalizes a fully staged session into a real {@link File} and records the
+     * result as a {@code FileVersion} (Phase 8.4).
+     *
+     * <p>The operation is authenticated and owner-scoped: the session is looked
+     * up by owner, so another user's session resolves to {@code 404}. Completion
+     * is only allowed while a session is {@code INITIATED} and unexpired, and
+     * only after every declared chunk is present exactly once at the expected
+     * size. A zero-byte upload follows the Phase 8.2 contract of a single empty
+     * chunk.</p>
+     *
+     * <p>PostgreSQL and object storage cannot share a transaction, so this method
+     * coordinates them explicitly. Bytes are assembled in ascending index order
+     * with bounded memory (at most one chunk stream is open at a time) and written
+     * to a fresh final object key; only then is the file metadata persisted. The
+     * metadata write and the session's transition to {@code COMPLETED} run in a
+     * single row-locked transaction, so two simultaneous completion attempts
+     * cannot produce two files or two versions. Staging objects are removed only
+     * after that transaction commits, and cleanup failures can never roll back or
+     * corrupt the completed file. A repeated completion of an already-completed
+     * session returns the recorded file/version instead of creating a new one.</p>
+     */
+    public FileUploadResponse complete(Authentication authentication, UUID sessionId) {
+
+        User caller = currentUser(authentication);
+        UUID callerId = caller.getId();
+
+        // Plan under a read transaction so the session's lazy associations
+        // (folder, replacement target and its owner) are available, and so a
+        // malformed or already-completed session is rejected before any bytes
+        // are moved.
+        CompletionPlan plan = transactionTemplate.execute(
+                status -> buildCompletionPlan(callerId, sessionId));
+
+        if (plan.alreadyCompleted()) {
+            return plan.completedResponse();
+        }
+
+        String objectKey = plan.newObjectKey();
+
+        // Assemble and store the final object before any metadata is written. If
+        // this fails there is nothing durable to compensate: the session stays
+        // INITIATED and the client may retry.
+        try (InputStream assembled = assemble(plan.chunks())) {
+            storageService.upload(
+                    objectKey, assembled, plan.totalSizeBytes(), plan.contentType());
+        } catch (IOException closeFailure) {
+            throw new StorageException("Unable to assemble uploaded chunks", closeFailure);
+        } catch (RuntimeException assemblyFailure) {
+            // A concurrent completion may have finalized the session and removed
+            // the staging objects while this attempt was still reading them, so a
+            // staging read can legitimately fail here. In that case this attempt
+            // is redundant: return the already-recorded result instead of failing
+            // a client whose upload genuinely completed.
+            FileUploadResponse recorded = recordedResultIfCompleted(callerId, sessionId);
+            if (recorded != null) {
+                discardObject(objectKey, null);
+                return recorded;
+            }
+            throw assemblyFailure;
+        }
+
+        CompletionOutcome outcome;
+        try {
+            outcome = transactionTemplate.execute(
+                    status -> persistCompletion(plan, objectKey, callerId));
+        } catch (RuntimeException databaseFailure) {
+            // Metadata did not persist, so the just-written object is orphaned
+            // and must be removed; the session is left INITIATED for a retry.
+            discardObject(objectKey, databaseFailure);
+            throw databaseFailure;
+        }
+
+        if (!outcome.objectConsumed()) {
+            // Another completion won the race; our uploaded object is
+            // unreferenced, so we remove it and return the winner's result.
+            discardObject(objectKey, null);
+        }
+
+        removeStaging(plan.sessionId(), plan.chunks());
+        return outcome.response();
+    }
+
+    /**
+     * Resolves everything completion needs in one read-only pass: session
+     * status/expiry, the full chunk set, and the final object key. A session
+     * that already completed short-circuits to its recorded result so a repeat
+     * request never touches storage again.
+     */
+    private CompletionPlan buildCompletionPlan(UUID ownerId, UUID sessionId) {
+
+        UploadSession session = uploadSessionRepository.findByIdAndOwnerId(sessionId, ownerId)
+                .orElseThrow(() -> new ResourceNotFoundException("Upload session not found"));
+
+        if (session.getStatus() == UploadSessionStatus.COMPLETED) {
+            return CompletionPlan.completed(recordedResponse(session));
+        }
+
+        if (session.getStatus() != UploadSessionStatus.INITIATED) {
+            throw new IllegalArgumentException(
+                    "Upload session cannot be completed in status " + session.getStatus());
+        }
+
+        if (isExpired(session)) {
+            throw new IllegalArgumentException("Upload session has expired");
+        }
+
+        List<UploadChunk> chunks = requireCompleteChunkSet(session);
+
+        boolean replacement = session.getTargetFile() != null;
+        UUID folderId = session.getFolder() != null ? session.getFolder().getId() : null;
+        UUID targetFileId = null;
+        UUID keyOwnerId = ownerId;
+
+        if (replacement) {
+            // Re-check edit access now: the collaborator who started the session
+            // may have lost permission since it was created.
+            FileAccessService.FileAccess access = fileAccessService.resolve(
+                    session.getOwner(), session.getTargetFile().getId());
+            if (!access.hasAccess()) {
+                throw new ForbiddenException("You do not have access to this file");
+            }
+            if (!access.canEdit()) {
+                throw new ForbiddenException(
+                        "You do not have permission to replace this file's content");
+            }
+            targetFileId = session.getTargetFile().getId();
+            // Replacement objects stay under the file owner's namespace, matching
+            // the multipart replacement flow.
+            keyOwnerId = session.getTargetFile().getOwner().getId();
+        }
+
+        return new CompletionPlan(
+                sessionId,
+                ownerId,
+                folderId,
+                targetFileId,
+                replacement,
+                session.getFilename(),
+                session.getContentType(),
+                session.getTotalSizeBytes(),
+                StorageKeys.contentObjectKey(keyOwnerId, session.getFilename()),
+                chunks,
+                null);
+    }
+
+    /**
+     * Persists the completed file inside a row-locked transaction. The lock on
+     * the session row is what serializes concurrent completions: the first to
+     * acquire it writes the file/version and marks the session completed, and any
+     * later attempt observes {@code COMPLETED} and returns the same result
+     * without creating anything.
+     */
+    private CompletionOutcome persistCompletion(
+            CompletionPlan plan, String objectKey, UUID callerId) {
+
+        UploadSession session = uploadSessionRepository
+                .findByIdAndOwnerIdForUpdate(plan.sessionId(), plan.ownerId())
+                .orElseThrow(() -> new ResourceNotFoundException("Upload session not found"));
+
+        if (session.getStatus() == UploadSessionStatus.COMPLETED) {
+            return new CompletionOutcome(false, recordedResponse(session));
+        }
+
+        if (session.getStatus() != UploadSessionStatus.INITIATED) {
+            throw new IllegalArgumentException(
+                    "Upload session cannot be completed in status " + session.getStatus());
+        }
+
+        User uploader = userRepository.getReferenceById(callerId);
+
+        FileUploadResponse response;
+        if (plan.replacement()) {
+            File target = fileRepository.findById(plan.targetFileId())
+                    .orElseThrow(() -> new ResourceNotFoundException("File not found"));
+            response = fileService.persistStoredReplacement(
+                    target,
+                    plan.filename(),
+                    plan.contentType(),
+                    plan.totalSizeBytes(),
+                    objectKey,
+                    uploader);
+        } else {
+            User owner = userRepository.getReferenceById(plan.ownerId());
+            Folder folder = plan.folderId() != null
+                    ? folderRepository.getReferenceById(plan.folderId())
+                    : null;
+            response = fileService.persistStoredNewFile(
+                    owner,
+                    folder,
+                    plan.filename(),
+                    plan.contentType(),
+                    plan.totalSizeBytes(),
+                    objectKey,
+                    uploader);
+        }
+
+        session.markCompleted(response.getId(), response.getCurrentVersion());
+        uploadSessionRepository.saveAndFlush(session);
+
+        return new CompletionOutcome(true, response);
+    }
+
+    /**
+     * Returns the recorded result if the session has completed since this attempt
+     * started, or {@code null} when it is still in progress (or gone). Used to
+     * make a redundant concurrent attempt succeed with the winner's result.
+     */
+    private FileUploadResponse recordedResultIfCompleted(UUID ownerId, UUID sessionId) {
+
+        return transactionTemplate.execute(status -> {
+            UploadSession session = uploadSessionRepository
+                    .findByIdAndOwnerId(sessionId, ownerId)
+                    .orElse(null);
+            if (session == null || session.getStatus() != UploadSessionStatus.COMPLETED) {
+                return null;
+            }
+            return recordedResponse(session);
+        });
+    }
+
+    /** Rebuilds the recorded result of a completed session for an idempotent repeat. */
+    private FileUploadResponse recordedResponse(UploadSession session) {
+
+        UUID fileId = session.getCompletedFileId();
+        if (fileId == null) {
+            // The completed file was deleted; the session tombstone remains but
+            // there is no result to return.
+            throw new ResourceNotFoundException(
+                    "The file produced by this upload no longer exists");
+        }
+
+        File file = fileRepository.findById(fileId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "The file produced by this upload no longer exists"));
+
+        int version = session.getCompletedVersionNumber() != null
+                ? session.getCompletedVersionNumber()
+                : 0;
+        return FileMapper.toUploadResponse(file, "UPLOADED", version);
+    }
+
+    /**
+     * Confirms every declared chunk is present exactly once at its expected size
+     * and that the sizes sum to the declared total. Indexes ascending without
+     * gaps also rules out duplicates, and the sum check catches any drift even if
+     * a row were inserted out of band.
+     */
+    private List<UploadChunk> requireCompleteChunkSet(UploadSession session) {
+
+        List<UploadChunk> chunks = uploadChunkRepository
+                .findBySessionIdOrderByChunkIndexAsc(session.getId());
+
+        if (chunks.size() != session.getTotalChunks()) {
+            throw new IllegalArgumentException("Upload is incomplete: expected "
+                    + session.getTotalChunks() + " chunks but found " + chunks.size());
+        }
+
+        long total = 0;
+        for (int index = 0; index < chunks.size(); index++) {
+            UploadChunk chunk = chunks.get(index);
+            if (chunk.getChunkIndex() != index) {
+                throw new IllegalArgumentException(
+                        "Upload has a gap or duplicate at index " + index);
+            }
+            long expected = expectedChunkSize(session, index);
+            if (chunk.getSizeBytes() != expected) {
+                throw new IllegalArgumentException("Chunk " + index + " has "
+                        + chunk.getSizeBytes() + " bytes but expected " + expected);
+            }
+            total += chunk.getSizeBytes();
+        }
+
+        if (total != session.getTotalSizeBytes()) {
+            throw new IllegalArgumentException("Uploaded bytes " + total
+                    + " do not match the declared size of "
+                    + session.getTotalSizeBytes());
+        }
+
+        return chunks;
+    }
+
+    /**
+     * Concatenates the staged chunk objects in ascending index order without ever
+     * buffering the assembled file. The backing objects are opened lazily as the
+     * previous one is exhausted and closed as it is consumed, so at most one
+     * chunk stream is held at a time no matter how many chunks there are.
+     */
+    private InputStream assemble(List<UploadChunk> chunks) {
+
+        Enumeration<InputStream> parts = new Enumeration<>() {
+            private int next = 0;
+
+            @Override
+            public boolean hasMoreElements() {
+                return next < chunks.size();
+            }
+
+            @Override
+            public InputStream nextElement() {
+                return storageService.download(chunks.get(next++).getStagingObjectKey());
+            }
+        };
+
+        return new SequenceInputStream(parts);
+    }
+
+    /** Removes a just-written final object, preserving a cleanup failure as suppressed. */
+    private void discardObject(String objectKey, RuntimeException cause) {
+
+        try {
+            storageService.delete(objectKey);
+        } catch (RuntimeException cleanupFailure) {
+            log.error("Failed to clean up final object {} after completion failure",
+                    objectKey, cleanupFailure);
+            if (cause != null) {
+                cause.addSuppressed(cleanupFailure);
+            }
+        }
+    }
+
+    /**
+     * Removes the session's staging objects and chunk rows after the file has
+     * been durably persisted. This is deliberately best-effort: the completed
+     * file is already valid, so a cleanup failure is logged and swallowed rather
+     * than turning a successful completion into an error.
+     */
+    private void removeStaging(UUID sessionId, List<UploadChunk> chunks) {
+
+        for (UploadChunk chunk : chunks) {
+            try {
+                storageService.delete(chunk.getStagingObjectKey());
+            } catch (RuntimeException cleanupFailure) {
+                log.warn("Failed to remove staging object {} after successful completion;"
+                        + " the completed file is unaffected",
+                        chunk.getStagingObjectKey(), cleanupFailure);
+            }
+        }
+
+        try {
+            transactionTemplate.executeWithoutResult(
+                    status -> uploadChunkRepository.deleteBySessionId(sessionId));
+        } catch (RuntimeException cleanupFailure) {
+            log.warn("Failed to remove chunk rows for completed session {};"
+                    + " the completed file is unaffected", sessionId, cleanupFailure);
+        }
+    }
+
+    /**
+     * Everything completion needs to assemble and persist a finalized file,
+     * resolved once so the storage phase needs no database session. A plan whose
+     * {@code completedResponse} is set represents an already-completed session.
+     */
+    private record CompletionPlan(
+            UUID sessionId,
+            UUID ownerId,
+            UUID folderId,
+            UUID targetFileId,
+            boolean replacement,
+            String filename,
+            String contentType,
+            long totalSizeBytes,
+            String newObjectKey,
+            List<UploadChunk> chunks,
+            FileUploadResponse completedResponse) {
+
+        boolean alreadyCompleted() {
+            return completedResponse != null;
+        }
+
+        static CompletionPlan completed(FileUploadResponse response) {
+            return new CompletionPlan(
+                    null, null, null, null, false, null, null, 0, null, List.of(), response);
+        }
+    }
+
+    /** Outcome of the locked persistence step. */
+    private record CompletionOutcome(boolean objectConsumed, FileUploadResponse response) {
     }
 
     /**

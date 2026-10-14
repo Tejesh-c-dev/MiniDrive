@@ -147,9 +147,11 @@ describe('ResumableUploadClient', () => {
     const state = await client.resume(makeFile('file.bin', 350), makeRecord());
 
     expect(api.chunkCalls).toEqual([1, 3]);
-    expect(state.phase).toBe('ready');
+    expect(state.phase).toBe('completed');
     expect(state.uploadedBytes).toBe(350);
     expect(state.progressPercent).toBe(100);
+    expect(api.completeCalls).toBe(1);
+    expect(state.result?.id).toBe('file-1');
     // Progress accounted for the 200 bytes stored before this run.
     expect(
       states.some(
@@ -167,8 +169,9 @@ describe('ResumableUploadClient', () => {
     const state = await client.resume(makeFile('file.bin', 350), makeRecord());
 
     expect(api.chunkCalls).toEqual([]);
-    expect(state.phase).toBe('ready');
+    expect(state.phase).toBe('completed');
     expect(state.progressPercent).toBe(100);
+    expect(api.completeCalls).toBe(1);
   });
 
   it('retries a transiently failing chunk and then completes', async () => {
@@ -184,7 +187,7 @@ describe('ResumableUploadClient', () => {
 
     expect(api.chunkCalls.filter((index) => index === 1)).toHaveLength(3);
     expect(delays).toHaveLength(2);
-    expect(state.phase).toBe('ready');
+    expect(state.phase).toBe('completed');
   });
 
   it('refreshes status after an ambiguous result instead of re-uploading', async () => {
@@ -204,7 +207,7 @@ describe('ResumableUploadClient', () => {
 
     expect(api.chunkCalls.filter((index) => index === 0)).toHaveLength(1);
     expect(api.statusCalls).toBeGreaterThanOrEqual(1);
-    expect(state.phase).toBe('ready');
+    expect(state.phase).toBe('completed');
     expect(state.uploadedBytes).toBe(200);
   });
 
@@ -368,7 +371,7 @@ describe('ResumableUploadClient', () => {
     );
 
     expect(api.chunkCalls).toEqual([0, 1]);
-    expect(resumed.phase).toBe('ready');
+    expect(resumed.phase).toBe('completed');
     expect(resumed.progressPercent).toBe(100);
   });
 
@@ -384,5 +387,140 @@ describe('ResumableUploadClient', () => {
     expect(second).toBe(first);
     await first;
     expect(api.createCalls).toBe(1);
+  });
+});
+
+describe('ResumableUploadClient finalization', () => {
+  it('finalizes after every chunk is staged and clears the resume record', async () => {
+    const api = new FakeUploadApi();
+    api.totalSizeBytes = 200;
+    api.totalChunks = 2;
+    const store = new ResumeStore(memoryStorage());
+    const { client, states } = makeClient(api, { store });
+
+    const state = await client.start(makeFile('file.bin', 200));
+
+    expect(api.chunkCalls).toEqual([0, 1]);
+    expect(api.completeCalls).toBe(1);
+    expect(state.phase).toBe('completed');
+    expect(state.result?.currentVersion).toBe(1);
+    expect(state.error).toBeNull();
+    expect(store.get(api.sessionId)).toBeNull();
+
+    // Finalizing was observable, and strictly before completion.
+    const phases = states.map((snapshot) => snapshot.phase);
+    expect(phases).toContain('finalizing');
+    expect(phases.indexOf('finalizing')).toBeLessThan(phases.indexOf('completed'));
+  });
+
+  it('does not report success at 100% chunk progress when finalization fails, then retries the same session', async () => {
+    const api = new FakeUploadApi();
+    api.totalSizeBytes = 100;
+    api.totalChunks = 1;
+    api.completeError = networkError();
+    const store = new ResumeStore(memoryStorage());
+    const { client } = makeClient(api, { store });
+
+    const first = await client.start(makeFile('file.bin', 100));
+
+    // All chunks are staged, but the run is not a successful upload.
+    expect(first.progressPercent).toBe(100);
+    expect(first.phase).toBe('failed');
+    expect(first.failureStage).toBe('finalize');
+    expect(first.result).toBeNull();
+    expect(store.get(api.sessionId)).not.toBeNull();
+
+    // Retry finalization with no chunk re-uploaded.
+    api.completeError = null;
+    const retried = await client.finalize();
+
+    expect(retried.phase).toBe('completed');
+    expect(retried.result?.id).toBe('file-1');
+    expect(api.chunkCalls).toEqual([0]);
+    expect(api.completeCalls).toBe(2);
+    expect(store.get(api.sessionId)).toBeNull();
+  });
+
+  it('resumes an already-completed session idempotently without re-uploading', async () => {
+    const api = new FakeUploadApi();
+    api.totalSizeBytes = 200;
+    api.totalChunks = 2;
+    api.status = 'COMPLETED';
+    const store = new ResumeStore(memoryStorage());
+    const record = makeRecord({
+      sizeBytes: 200,
+      totalChunks: 2,
+      chunkSizeBytes: 100,
+    });
+    store.save(record);
+    const { client } = makeClient(api, { store });
+
+    const state = await client.resume(makeFile('file.bin', 200), record);
+
+    expect(api.chunkCalls).toEqual([]);
+    expect(api.completeCalls).toBe(1);
+    expect(state.phase).toBe('completed');
+    expect(store.get(record.sessionId)).toBeNull();
+  });
+
+  it('finalizes a zero-byte upload as a single empty chunk', async () => {
+    const api = new FakeUploadApi();
+    api.totalSizeBytes = 0;
+    api.totalChunks = 1;
+    const { client } = makeClient(api);
+
+    const state = await client.start(makeFile('empty.bin', 0));
+
+    expect(api.chunkCalls).toEqual([0]);
+    expect(api.completeCalls).toBe(1);
+    expect(state.phase).toBe('completed');
+    expect(state.progressPercent).toBe(100);
+  });
+
+  it('coalesces a duplicate finalize while a run is active', async () => {
+    const api = new FakeUploadApi();
+    api.totalSizeBytes = 100;
+    api.totalChunks = 1;
+    const { client } = makeClient(api);
+
+    const first = client.start(makeFile('file.bin', 100));
+    const second = client.finalize();
+
+    expect(second).toBe(first);
+    await first;
+    expect(api.completeCalls).toBe(1);
+  });
+
+  it('finalize is a no-op without an active session', async () => {
+    const api = new FakeUploadApi();
+    const { client } = makeClient(api);
+
+    const state = await client.finalize();
+
+    expect(state.phase).toBe('idle');
+    expect(api.completeCalls).toBe(0);
+  });
+
+  it('lists stored resumable sessions and forgets them after finalization', async () => {
+    const api = new FakeUploadApi();
+    api.totalSizeBytes = 100;
+    api.totalChunks = 1;
+    const store = new ResumeStore(memoryStorage());
+    const record = makeRecord({
+      sizeBytes: 100,
+      totalChunks: 1,
+      chunkSizeBytes: 100,
+    });
+    store.save(record);
+    const { client } = makeClient(api, { store });
+
+    expect(client.listResumable().map((entry) => entry.sessionId)).toEqual([
+      record.sessionId,
+    ]);
+
+    const state = await client.resume(makeFile('file.bin', 100), record);
+
+    expect(state.phase).toBe('completed');
+    expect(client.listResumable()).toEqual([]);
   });
 });

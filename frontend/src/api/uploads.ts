@@ -13,12 +13,16 @@
  *          body is the raw chunk bytes; Content-Type must be exactly
  *          application/octet-stream (the server rejects anything else)
  * - DELETE /api/uploads/{sessionId}                -> 204 No Content (abort)
+ * - POST   /api/uploads/{sessionId}/complete       -> FileUploadResponse (200)
+ *          assembles the staged chunks into a real file once every chunk is
+ *          present; idempotent, so repeating it returns the recorded result
  *
- * These endpoints only stage chunk bytes. Assembling the chunks into a file is
- * Phase 8.4 and is deliberately not called here.
+ * The chunk endpoints only stage bytes; `completeUploadSession` (Phase 8.4) is
+ * the finalization step that turns a fully staged session into a file.
  */
 import { apiClient } from '@/api/client';
 import { toApiError } from '@/api/errors';
+import type { FileUploadResponse } from '@/api/files';
 
 /**
  * Request body for creating a session. Mirrors
@@ -95,6 +99,8 @@ export interface ResumableUploadApi {
     chunk: Blob,
     signal?: AbortSignal,
   ): Promise<ChunkUploadResponse>;
+  /** Finalize a fully staged session; idempotent for an already-completed one. */
+  completeUploadSession(sessionId: string): Promise<FileUploadResponse>;
   abortUploadSession(sessionId: string): Promise<void>;
 }
 
@@ -170,6 +176,27 @@ export async function uploadChunk(
 }
 
 /**
+ * Finalize a fully staged session into a real file. Mirrors the backend's
+ * POST /api/uploads/{sessionId}/complete, which returns the same
+ * FileUploadResponse contract as the multipart upload/replacement flows and is
+ * idempotent: repeating it on a completed session returns the recorded file
+ * instead of creating a second one. The resumable client only calls this once
+ * it has confirmed every chunk is staged.
+ */
+export async function completeUploadSession(
+  sessionId: string,
+): Promise<FileUploadResponse> {
+  try {
+    const { data } = await apiClient.post<FileUploadResponse>(
+      `/api/uploads/${sessionId}/complete`,
+    );
+    return data;
+  } catch (error: unknown) {
+    throw toApiError(error);
+  }
+}
+
+/**
  * Abort a session and have the server delete all of its staging objects.
  * Idempotent on the backend, so calling it twice is safe.
  */
@@ -187,6 +214,7 @@ export function createResumableUploadApi(): ResumableUploadApi {
     createUploadSession,
     getUploadSessionStatus,
     uploadChunk,
+    completeUploadSession,
     abortUploadSession,
   };
 }

@@ -1,13 +1,15 @@
 /**
- * Resumable chunked upload client (Phase 8.3).
+ * Resumable chunked upload client (Phase 8.3/8.5).
  *
  * Drives the Phase 8.2 upload-session endpoints from the browser: create a
  * session, ask the server which chunks already landed, then upload only the
  * missing ones using Blob.slice() (the file is never loaded into memory whole).
  *
- * This module intentionally stops at "every chunk is staged" -- assembling the
- * chunks into a file is Phase 8.4 -- so a completed run ends in the `ready`
- * phase rather than reporting a finished file.
+ * Once every chunk is staged the client calls the Phase 8.4 finalization
+ * endpoint, so a run only reports `completed` after the backend has produced a
+ * real file. Reaching 100% chunk progress is deliberately not success: a failed
+ * finalization leaves the run `failed` while keeping the session (and its
+ * persisted record) so it can be retried without re-uploading any bytes.
  *
  * Design notes
  * - The transport is injected (see ResumableUploadApi) so the orchestration is
@@ -28,6 +30,7 @@ import type {
   UploadSessionStatusResponse,
 } from '@/api/uploads';
 import type { ApiError } from '@/types/api';
+import type { FileUploadResponse } from '@/api/files';
 import {
   ResumeStore,
   isExpired,
@@ -42,8 +45,12 @@ export type UploadPhase =
   | 'retrying'
   | 'paused'
   | 'cancelled'
-  | 'ready'
+  | 'finalizing'
+  | 'completed'
   | 'failed';
+
+/** Which stage a `failed` run failed at, so the UI can offer the right retry. */
+export type UploadFailureStage = 'chunks' | 'finalize';
 
 /** Immutable snapshot of the upload's state. */
 export interface ResumableUploadState {
@@ -58,6 +65,10 @@ export interface ResumableUploadState {
   /** Consecutive transient failures on the current chunk (0 outside a retry). */
   retryAttempt: number;
   error: ApiError | null;
+  /** The finalized file once the backend completion succeeds, else null. */
+  result: FileUploadResponse | null;
+  /** Where a `failed` run stopped; null unless phase is `failed`. */
+  failureStage: UploadFailureStage | null;
 }
 
 /** Where a new upload should land (or which file it replaces). */
@@ -258,6 +269,8 @@ export function createInitialUploadState(): ResumableUploadState {
     progressPercent: 0,
     retryAttempt: 0,
     error: null,
+    result: null,
+    failureStage: null,
   };
 }
 
@@ -372,6 +385,26 @@ export class ResumableUploadClient {
     return this.store.findForFile(file, this.now());
   }
 
+  /** All resumable sessions stored in the browser, newest first. */
+  listResumable(): ResumableUploadRecord[] {
+    return this.store.list(this.now());
+  }
+
+  /**
+   * Retry finalization for a run whose chunks are all staged. Uses the same
+   * session as the original run, so no chunk is re-uploaded; the backend's
+   * completion endpoint is idempotent. No-op when there is no active session.
+   */
+  finalize(): Promise<ResumableUploadState> {
+    if (this.activeRun !== null) return this.activeRun;
+    const session = this.session;
+    if (session === null) return Promise.resolve(this.state);
+    this.paused = false;
+    this.cancelled = false;
+    this.failed = false;
+    return this.track(this.finalizeRun(session));
+  }
+
   /**
    * Stop scheduling new chunks while keeping the session (and its persisted
    * record) so it can be resumed later. In-flight chunks finish normally.
@@ -408,8 +441,26 @@ export class ResumableUploadClient {
       this.store.remove(sessionId);
     }
 
-    this.patch({ phase: 'cancelled', retryAttempt: 0, error: null });
+    this.patch({
+      phase: 'cancelled',
+      retryAttempt: 0,
+      error: null,
+      failureStage: null,
+    });
     return this.state;
+  }
+
+  /**
+   * Abort a session discovered in the resume store and drop its record. Used
+   * by the interrupted-uploads panel; best-effort on the server side.
+   */
+  async discard(record: ResumableUploadRecord): Promise<void> {
+    try {
+      await this.api.abortUploadSession(record.sessionId);
+    } catch {
+      // The session may already be gone; the record is cleared regardless.
+    }
+    this.store.remove(record.sessionId);
   }
 
   /** Abort any active run and return to the idle state. */
@@ -564,6 +615,8 @@ export class ResumableUploadClient {
       progressPercent: 0,
       retryAttempt: 0,
       error: null,
+      result: null,
+      failureStage: null,
     });
   }
 
@@ -572,29 +625,66 @@ export class ResumableUploadClient {
     session: ActiveSession,
   ): Promise<void> {
     const missing = missingChunkIndexes(session.totalChunks, this.done);
-    if (missing.length === 0) {
-      this.recomputeProgress();
-      this.patch({ phase: 'ready' });
-      return;
-    }
 
-    const cursor = { next: 0 };
-    const workerCount = Math.max(
-      1,
-      Math.min(this.concurrency, missing.length),
-    );
-    const workers: Promise<void>[] = [];
-    for (let worker = 0; worker < workerCount; worker += 1) {
-      workers.push(this.worker(file, session, missing, cursor));
-    }
-    await Promise.all(workers);
-
-    if (!this.shouldStop()) {
-      if (this.done.size >= session.totalChunks) {
-        this.recomputeProgress();
-        this.patch({ phase: 'ready' });
+    if (missing.length > 0) {
+      const cursor = { next: 0 };
+      const workerCount = Math.max(
+        1,
+        Math.min(this.concurrency, missing.length),
+      );
+      const workers: Promise<void>[] = [];
+      for (let worker = 0; worker < workerCount; worker += 1) {
+        workers.push(this.worker(file, session, missing, cursor));
       }
+      await Promise.all(workers);
     }
+
+    if (this.shouldStop()) return;
+
+    // Every chunk is staged: finalize into a real file. Reaching this point
+    // with all chunks done (including ones stored before a resumption) is the
+    // only path to `completed`.
+    if (this.done.size >= session.totalChunks) {
+      this.recomputeProgress();
+      await this.runCompletion(session);
+    }
+  }
+
+  /**
+   * Call the completion endpoint and adopt its result. On success the resume
+   * record is cleared (the session is no longer resumable) and the run becomes
+   * `completed`; on failure the session is kept so finalization can be retried
+   * from `finalize()` without re-uploading anything.
+   */
+  private async runCompletion(session: ActiveSession): Promise<void> {
+    this.patch({
+      phase: 'finalizing',
+      retryAttempt: 0,
+      error: null,
+      failureStage: null,
+    });
+
+    try {
+      const file = await this.api.completeUploadSession(session.id);
+      this.store.remove(session.id);
+      this.done = new Set(range(session.totalChunks));
+      this.recomputeProgress();
+      this.patch({ phase: 'completed', result: file, failureStage: null });
+    } catch (error) {
+      const apiError = toApiError(error);
+      if (apiError.status === 404) {
+        // The session (or its file) is gone, so the record is not resumable.
+        this.store.remove(session.id);
+      }
+      this.fail(apiError, 'finalize');
+    }
+  }
+
+  private async finalizeRun(
+    session: ActiveSession,
+  ): Promise<ResumableUploadState> {
+    await this.runCompletion(session);
+    return this.state;
   }
 
   private async worker(
@@ -825,9 +915,14 @@ export class ResumableUploadClient {
     return this.failed || this.paused || this.cancelled;
   }
 
-  private fail(error: ApiError): void {
+  private fail(error: ApiError, stage: UploadFailureStage = 'chunks'): void {
     this.failed = true;
-    this.patch({ phase: 'failed', error, retryAttempt: 0 });
+    this.patch({
+      phase: 'failed',
+      error,
+      retryAttempt: 0,
+      failureStage: stage,
+    });
   }
 
   private patch(partial: Partial<ResumableUploadState>): void {

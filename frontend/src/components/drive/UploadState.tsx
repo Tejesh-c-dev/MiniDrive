@@ -1,52 +1,113 @@
 /**
- * Displays upload progress inline on the DrivePage. `progressPercent` falls
- * back to an indeterminate bar while the XHR has not reported any
- * uploadProgress events — an indicator still shows even then.
+ * Inline status for the resumable upload on the DrivePage. Renders the phase
+ * label/tone and progress from the pure `describeUploadState` mapper, and
+ * exposes cancel / retry-finalize / dismiss actions where the phase permits.
+ *
+ * The 100% bar during `finalizing` is intentionally not "success": the tone
+ * only turns green once the backend completion succeeds.
  */
+import type { ResumableUploadState } from '@/uploads/resumableUpload';
+import { describeUploadState } from '@/uploads/uploadStatus';
+
 export interface UploadStateProps {
-  fileName: string;
-  progressPercent: number | null; // null = no meaningful progress events yet
+  state: ResumableUploadState;
+  /** Abort the server session (offered while one exists and is abortable). */
+  onCancel?: () => void;
+  /** Retry finalization after a finalize-stage failure (same session). */
+  onRetryFinalize?: () => void;
+  /** Clear the finished/failed status from the page. */
+  onDismiss?: () => void;
 }
 
 export default function UploadState({
-  fileName,
-  progressPercent,
+  state,
+  onCancel,
+  onRetryFinalize,
+  onDismiss,
 }: UploadStateProps) {
-  const indeterminate = progressPercent === null;
-  const shown = indeterminate ? 0 : Math.min(100, Math.max(0, progressPercent));
+  if (state.phase === 'idle') return null;
+
+  const view = describeUploadState(state);
+  const isError = view.tone === 'error';
+  const indeterminate = view.percent === null;
+  const shown = view.percent ?? 0;
+
+  const containerTone = isError
+    ? 'border-red-200 bg-red-50 text-red-900'
+    : view.tone === 'success'
+      ? 'border-green-200 bg-green-50 text-green-900'
+      : 'border-blue-200 bg-blue-50 text-blue-900';
+  const barTone = isError ? 'bg-red-600' : 'bg-blue-600';
 
   return (
     <div
       data-testid="upload-state"
-      role="status"
-      aria-live="polite"
-      className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900"
+      data-phase={state.phase}
+      role={isError ? 'alert' : 'status'}
+      aria-live={isError ? 'assertive' : 'polite'}
+      className={`rounded-lg border p-3 text-sm ${containerTone}`}
     >
       <div className="flex items-center justify-between gap-3">
-        <span className="truncate font-medium">
-          Uploading <span className="font-semibold">{fileName}</span>
-        </span>
-        <span className="shrink-0 tabular-nums text-xs font-semibold text-blue-700">
-          {Math.round(shown)}%
+        <span className="truncate font-medium">{view.label}</span>
+        <span className="shrink-0 tabular-nums text-xs font-semibold">
+          {indeterminate ? '…' : `${Math.round(shown)}%`}
         </span>
       </div>
-      <div
-        className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-blue-200"
-        role="progressbar"
-        aria-label={`Uploading ${fileName}`}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={indeterminate ? undefined : Math.round(shown)}
-      >
+
+      {state.filename !== null && (
         <div
-          className={
-            indeterminate
-              ? 'h-full w-1/3 rounded-full bg-blue-600 animate-pulse'
-              : 'h-full rounded-full bg-blue-600 transition-all duration-150 ease-out'
-          }
-          style={indeterminate ? undefined : { width: `${shown}%` }}
-        />
-      </div>
+          className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-black/10"
+          role="progressbar"
+          aria-label={view.label}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={indeterminate ? undefined : Math.round(shown)}
+        >
+          <div
+            className={
+              indeterminate
+                ? `h-full w-1/3 rounded-full ${barTone} animate-pulse`
+                : `h-full rounded-full ${barTone} transition-all duration-150 ease-out`
+            }
+            style={indeterminate ? undefined : { width: `${shown}%` }}
+          />
+        </div>
+      )}
+
+      {(view.canCancel || view.canRetryFinalize || view.terminal) && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          {view.canRetryFinalize && onRetryFinalize && (
+            <button
+              type="button"
+              onClick={onRetryFinalize}
+              data-testid="upload-retry-finalize"
+              className="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100"
+            >
+              Retry finalization
+            </button>
+          )}
+          {view.canCancel && onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              data-testid="upload-cancel"
+              className="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100"
+            >
+              Cancel upload
+            </button>
+          )}
+          {view.terminal && onDismiss && (
+            <button
+              type="button"
+              onClick={onDismiss}
+              data-testid="upload-dismiss"
+              className="rounded-md border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100"
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

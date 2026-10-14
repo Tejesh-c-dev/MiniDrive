@@ -342,6 +342,32 @@ class FileControllerTest {
     }
 
     @Test
+    void concurrentFilenameRaceIsTranslatedToTheStandardValidationError() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        String aliceId = userId("alice@test.com");
+
+        // The availability pre-check passes, then the insert loses a race to a
+        // concurrent create: the database raises the filename uniqueness
+        // violation and the reconciling re-check finds the competing row. The
+        // caller must get the same 400 as a plain duplicate, not a 500.
+        org.mockito.Mockito.doReturn(false, true)
+                .when(fileRepository)
+                .existsByOwnerIdAndFolderIdIsNullAndName(UUID.fromString(aliceId), "race.txt");
+        org.mockito.Mockito.doThrow(new org.springframework.dao.DataIntegrityViolationException(
+                        "duplicate key value violates unique constraint \"uq_files_owner_folder_name\""))
+                .when(fileRepository).saveAndFlush(org.mockito.ArgumentMatchers.any(File.class));
+
+        mockMvc.perform(multipart("/api/files")
+                        .file(new MockMultipartFile("file", "race.txt", "text/plain", new byte[]{1}))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error")
+                        .value("A file with this name already exists in this folder"));
+
+        org.junit.jupiter.api.Assertions.assertEquals(0, fileRepository.count());
+    }
+
+    @Test
     void sameFileNameInDifferentFoldersIsAllowed() throws Exception {
         String token = registerAndGetToken("Alice", "alice@test.com");
         String folderId = createFolderAndGetId(token, "Documents");

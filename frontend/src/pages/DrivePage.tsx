@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   listFiles,
   downloadFile,
-  uploadFile,
   renameFile,
   replaceFileContent,
 } from '@/api/files';
@@ -23,6 +22,11 @@ import RenameDialog from '@/components/drive/RenameDialog';
 import ShareDialog from '@/components/sharing/ShareDialog';
 import VersionHistoryDialog from '@/components/files/VersionHistoryDialog';
 import UploadState from '@/components/drive/UploadState';
+import ResumableUploadsPanel from '@/components/drive/ResumableUploadsPanel';
+import { useResumableUpload } from '@/hooks/useResumableUpload';
+import { validateResumeAssociation } from '@/uploads/resumableUpload';
+import { isUploadBusy } from '@/uploads/uploadStatus';
+import type { ResumableUploadRecord } from '@/uploads/resumeStore';
 
 /**
  * Drive dashboard (Phase 5.3): browser of the user's folders and files.
@@ -47,9 +51,13 @@ export default function DrivePage() {
   const [filesError, setFilesError] = useState<ApiError | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<ApiError | null>(null);
-  const [uploadingName, setUploadingName] = useState<string | null>(null);
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  const [uploadError, setUploadError] = useState<ApiError | null>(null);
+  const upload = useResumableUpload();
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+  const [resumeTarget, setResumeTarget] = useState<ResumableUploadRecord | null>(
+    null,
+  );
+  const [resumeTick, setResumeTick] = useState(0);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [renamingFolder, setRenamingFolder] = useState<FolderSummary | null>(null);
@@ -62,30 +70,36 @@ export default function DrivePage() {
   const [replaceNotice, setReplaceNotice] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
+  const resumeInputRef = useRef<HTMLInputElement>(null);
+  const uploadActive = isUploadBusy(upload.state.phase);
 
   const handlePickFile = () => {
-    setUploadError(null);
+    setUploadNotice(null);
+    setResumeError(null);
     fileInputRef.current?.click();
   };
 
+  // A new-file upload always goes through the resumable session client (chunked
+  // staging + backend finalization). The listing is only refreshed once the
+  // backend has produced the file. Content replacement keeps its own multipart
+  // flow below, so a normal upload can never be turned into a replacement.
   const handleFileSelected = async (
     event: React.ChangeEvent<HTMLInputElement>,
   ) => {
     const file = event.target.files?.[0];
     // Reset the input so picking the same file again re-fires the change event.
     event.target.value = '';
-    if (!file || uploadingName !== null) return;
-    setUploadingName(file.name);
-    setUploadProgress(null);
-    setUploadError(null);
-    try {
-      await uploadFile(file, folderId ?? undefined, setUploadProgress);
+    if (!file || uploadActive) return;
+    setUploadNotice(null);
+    setResumeError(null);
+
+    const result = await upload.start(
+      file,
+      folderId ? { folderId: folderId } : {},
+    );
+    if (result.phase === 'completed') {
+      setUploadNotice(`Uploaded ${result.result?.name ?? file.name}.`);
       refresh();
-    } catch (err: unknown) {
-      setUploadError(err as ApiError);
-    } finally {
-      setUploadingName(null);
-      setUploadProgress(null);
     }
   };
 
@@ -93,6 +107,54 @@ export default function DrivePage() {
   const refresh = useCallback(() => {
     setRefreshTick((tick) => tick + 1);
   }, []);
+
+  // Interrupted sessions discovered in the resume store, excluding whichever one
+  // the active upload is already working on.
+  const resumableRecords = useMemo(
+    () =>
+      upload
+        .listResumable()
+        .filter((record) => record.sessionId !== upload.state.sessionId),
+    [upload.state.phase, upload.state.sessionId, refreshTick, resumeTick],
+  );
+
+  const handleResumeRequest = (record: ResumableUploadRecord) => {
+    if (uploadActive) return;
+    setResumeError(null);
+    setUploadNotice(null);
+    setResumeTarget(record);
+    resumeInputRef.current?.click();
+  };
+
+  const handleResumeSelected = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    const record = resumeTarget;
+    setResumeTarget(null);
+    if (!file || record === null || uploadActive) return;
+
+    // A refresh never preserves the original File object, so validate the
+    // re-selected file against the saved record before contacting the server.
+    const mismatch = validateResumeAssociation(file, record);
+    if (mismatch !== null) {
+      setResumeError(mismatch);
+      return;
+    }
+
+    const result = await upload.resume(file, record);
+    if (result.phase === 'completed') {
+      setUploadNotice(`Uploaded ${result.result?.name ?? file.name}.`);
+      refresh();
+    }
+  };
+
+  const handleDiscardUpload = async (record: ResumableUploadRecord) => {
+    setResumeError(null);
+    await upload.discardResumable(record);
+    setResumeTick((tick) => tick + 1);
+  };
 
   // Open the native picker for a content replacement, remembering which file
   // the selected bytes will be applied to. The backend is the sole authority on
@@ -243,7 +305,6 @@ export default function DrivePage() {
     folders.length === 0 &&
     files.length === 0;
   const downloading = downloadingId !== null;
-  const uploading = uploadingName !== null;
   // Prefer the freshest metadata for the open history dialog so currentVersion
   // reflects a just-completed restore; fall back to the clicked snapshot.
   const historyTarget =
@@ -264,16 +325,16 @@ export default function DrivePage() {
           <button
             type="button"
             onClick={handlePickFile}
-            disabled={uploading}
+            disabled={uploadActive}
             data-testid="upload-button"
             className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {uploading ? 'Uploading…' : 'Upload'}
+            {uploadActive ? 'Uploading…' : 'Upload'}
           </button>
           <button
             type="button"
             onClick={() => setNewFolderOpen(true)}
-            disabled={creatingFolder || uploading}
+            disabled={creatingFolder || uploadActive}
             data-testid="new-folder-button"
             className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
           >
@@ -320,6 +381,16 @@ export default function DrivePage() {
         className="hidden"
         onChange={handleReplacementSelected}
         data-testid="replace-input"
+      />
+
+      {/* Hidden input used to re-select the original file for an interrupted
+          session; the target record is captured when Resume is chosen. */}
+      <input
+        ref={resumeInputRef}
+        type="file"
+        className="hidden"
+        onChange={handleResumeSelected}
+        data-testid="resume-input"
       />
 
       {trailError && (
@@ -421,23 +492,48 @@ export default function DrivePage() {
         </>
       )}
 
-      {uploadError && (
-        <p
-          role="alert"
-          data-testid="upload-error"
-          className="mt-4 text-sm font-medium text-red-600"
-        >
-          {uploadError.message}
-        </p>
-      )}
-      {uploadingName !== null && (
+      {upload.state.phase !== 'idle' && (
         <div className="mt-4">
           <UploadState
-            fileName={uploadingName}
-            progressPercent={uploadProgress}
+            state={upload.state}
+            onCancel={() => {
+              void upload.cancel();
+            }}
+            onRetryFinalize={() => {
+              void upload.finalize();
+            }}
+            onDismiss={() => {
+              upload.reset();
+              setResumeTick((tick) => tick + 1);
+            }}
           />
         </div>
       )}
+      {uploadNotice !== null && (
+        <p
+          role="status"
+          data-testid="upload-notice"
+          className="mt-4 text-sm font-medium text-green-700"
+        >
+          {uploadNotice}
+        </p>
+      )}
+      {resumeError !== null && (
+        <p
+          role="alert"
+          data-testid="resume-error"
+          className="mt-4 text-sm font-medium text-red-600"
+        >
+          {resumeError}
+        </p>
+      )}
+
+      <ResumableUploadsPanel
+        records={resumableRecords}
+        onResume={handleResumeRequest}
+        onDiscard={handleDiscardUpload}
+        disabled={uploadActive}
+      />
 
       {replacingId !== null && (
         <p

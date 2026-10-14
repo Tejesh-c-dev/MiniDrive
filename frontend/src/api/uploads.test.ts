@@ -12,6 +12,7 @@ vi.mock('@/api/client', () => ({ apiClient: clientMock }));
 import {
   CHUNK_CONTENT_TYPE,
   abortUploadSession,
+  completeUploadSession,
   createUploadSession,
   getUploadSessionStatus,
   uploadChunk,
@@ -114,6 +115,33 @@ describe('uploads api', () => {
     await abortUploadSession('session-7');
 
     expect(clientMock.delete).toHaveBeenCalledWith('/api/uploads/session-7');
+  });
+
+  it('finalizes a session at POST /api/uploads/{id}/complete', async () => {
+    clientMock.post.mockResolvedValue({
+      data: { id: 'file-1', currentVersion: 2, uploadStatus: 'UPLOADED' },
+    });
+
+    const result = await completeUploadSession('session-7');
+
+    expect(clientMock.post).toHaveBeenCalledWith('/api/uploads/session-7/complete');
+    expect(result.id).toBe('file-1');
+    expect(result.currentVersion).toBe(2);
+  });
+
+  it('maps a completion conflict to a typed ApiError', async () => {
+    clientMock.post.mockRejectedValue({
+      isAxiosError: true,
+      response: {
+        status: 409,
+        data: { error: 'A file with this name already exists in this folder' },
+      },
+    });
+
+    await expect(completeUploadSession('session-7')).rejects.toMatchObject({
+      message: 'A file with this name already exists in this folder',
+      status: 409,
+    });
   });
 
   it('maps backend failures to a typed ApiError', async () => {

@@ -9,6 +9,7 @@ import type {
   UploadSessionResponse,
   UploadSessionStatusResponse,
 } from '@/api/uploads';
+import type { FileUploadResponse } from '@/api/files';
 import {
   ResumeStore,
   type ResumableUploadRecord,
@@ -102,10 +103,12 @@ export class FakeUploadApi implements ResumableUploadApi {
   createCalls = 0;
   statusCalls = 0;
   abortCalls = 0;
+  completeCalls = 0;
   chunkCalls: number[] = [];
 
   createError: unknown = null;
   statusError: unknown = null;
+  completeError: unknown = null;
   onChunk: ChunkHook | null = null;
 
   async createUploadSession(
@@ -160,6 +163,26 @@ export class FakeUploadApi implements ResumableUploadApi {
     const duplicate = this.uploaded.has(index);
     this.uploaded.add(index);
     return { sessionId, chunkIndex: index, sizeBytes: chunk.size, duplicate };
+  }
+
+  async completeUploadSession(sessionId: string): Promise<FileUploadResponse> {
+    this.completeCalls += 1;
+    if (this.completeError) throw this.completeError;
+    this.status = 'COMPLETED';
+    return {
+      id: 'file-1',
+      name: 'file.bin',
+      folderId: null,
+      ownerId: 'owner-1',
+      objectKey: `files/${sessionId}`,
+      contentType: 'application/octet-stream',
+      sizeBytes: this.totalSizeBytes,
+      checksum: null,
+      uploadStatus: 'UPLOADED',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      currentVersion: 1,
+    };
   }
 
   async abortUploadSession(): Promise<void> {

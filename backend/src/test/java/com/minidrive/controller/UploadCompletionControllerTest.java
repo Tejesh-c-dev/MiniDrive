@@ -355,6 +355,33 @@ class UploadCompletionControllerTest {
                 .delete(org.mockito.ArgumentMatchers.argThat(key -> !key.startsWith("_uploads/")));
     }
 
+    @Test
+    void filenameConflictDuringFinalizationIsReportedAsAValidationError() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        String ownerId = userId("alice@test.com");
+        String sessionId = createSession(token, "conflict.bin", "application/octet-stream", 32);
+        putChunk(token, sessionId, 0, patternBytes(32, 12)).andExpect(status().isOk());
+
+        // The name pre-check passes, then the insert loses the race: the
+        // completion must surface the standard 400 (and remove its orphaned
+        // object) rather than reporting a 500.
+        org.mockito.Mockito.doReturn(false, true)
+                .when(fileRepository)
+                .existsByOwnerIdAndFolderIdIsNullAndName(UUID.fromString(ownerId), "conflict.bin");
+        org.mockito.Mockito.doThrow(new DataIntegrityViolationException(
+                        "duplicate key value violates unique constraint \"uq_files_owner_folder_name\""))
+                .when(fileRepository).saveAndFlush(any(File.class));
+
+        complete(token, sessionId)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error")
+                        .value("A file with this name already exists in this folder"));
+
+        assertThat(fileRepository.count()).isZero();
+        assertThat(finalKeys()).isEmpty();
+        assertThat(session(sessionId).getStatus()).isEqualTo(UploadSessionStatus.INITIATED);
+    }
+
     // -------------------------------------------------------------------
     // Staging cleanup
     // -------------------------------------------------------------------
@@ -613,6 +640,10 @@ class UploadCompletionControllerTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         return JsonPath.read(body, "$.id");
+    }
+
+    private String userId(String email) {
+        return userRepository.findByEmail(email).orElseThrow().getId().toString();
     }
 
     private String registerAndGetToken(String name, String email) throws Exception {

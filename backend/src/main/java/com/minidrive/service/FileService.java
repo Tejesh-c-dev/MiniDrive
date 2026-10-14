@@ -22,6 +22,7 @@ import com.minidrive.storage.StorageService;
 import com.minidrive.exception.StorageException;
 import com.minidrive.util.StorageKeys;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -94,7 +95,7 @@ public class FileService {
         try {
             File file = new File(owner, folder, name, contentType, size, null);
             file.setObjectKey(objectKey);
-            File saved = fileRepository.saveAndFlush(file);
+            File saved = saveNewFileReconcilingNameConflict(owner, folder, file);
             // First content for this logical file is version 1. Persisting the
             // version inside the same transaction keeps metadata and history
             // consistent: a failure rolls both back and the object is cleaned up.
@@ -135,7 +136,8 @@ public class FileService {
         file.setObjectKey(buildObjectKey(owner.getId()));
 
         // Metadata-only registration stores no content, so its current version is 0.
-        return FileMapper.toUploadResponse(fileRepository.save(file), 0);
+        return FileMapper.toUploadResponse(
+                saveNewFileReconcilingNameConflict(owner, folder, file), 0);
     }
 
     @Transactional(readOnly = true)
@@ -380,7 +382,7 @@ public class FileService {
 
         File file = new File(owner, folder, name, contentType, sizeBytes, null);
         file.setObjectKey(objectKey);
-        File saved = fileRepository.saveAndFlush(file);
+        File saved = saveNewFileReconcilingNameConflict(owner, folder, file);
         // First content for this logical file is version 1, matching the
         // single-shot upload flow.
         fileVersionRepository.saveAndFlush(
@@ -660,15 +662,45 @@ public class FileService {
 
     private void assertNameAvailable(User owner, Folder folder, String name) {
 
-        boolean taken = folder != null
+        if (nameExists(owner, folder, name)) {
+            throw new IllegalArgumentException(
+                    "A file with this name already exists in this folder");
+        }
+    }
+
+    private boolean nameExists(User owner, Folder folder, String name) {
+
+        return folder != null
                 ? fileRepository.existsByOwnerIdAndFolderIdAndName(
                         owner.getId(), folder.getId(), name)
                 : fileRepository.existsByOwnerIdAndFolderIdIsNullAndName(
                         owner.getId(), name);
+    }
 
-        if (taken) {
-            throw new IllegalArgumentException(
-                    "A file with this name already exists in this folder");
+    /**
+     * Inserts a brand-new file, translating the database's filename-uniqueness
+     * violation into the same client-facing error the availability pre-check
+     * raises.
+     *
+     * <p>{@link #assertNameAvailable} is a check-then-insert and can race with a
+     * concurrent create for the same (owner, folder, name); the unique index
+     * {@code uq_files_owner_folder_name} is the real guard and rejects the loser.
+     * Re-checking the name on failure lets a genuine race surface as the standard
+     * {@code 400} "name already exists" response, while any other integrity
+     * failure (for example a versioning or key conflict) is rethrown unchanged so
+     * it is never mistaken for a filename conflict.</p>
+     */
+    private File saveNewFileReconcilingNameConflict(
+            User owner, Folder folder, File file) {
+
+        try {
+            return fileRepository.saveAndFlush(file);
+        } catch (DataIntegrityViolationException violation) {
+            if (nameExists(owner, folder, file.getName())) {
+                throw new IllegalArgumentException(
+                        "A file with this name already exists in this folder");
+            }
+            throw violation;
         }
     }
 

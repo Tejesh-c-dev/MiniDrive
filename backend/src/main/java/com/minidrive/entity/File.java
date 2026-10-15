@@ -24,9 +24,18 @@ import java.util.UUID;
 @Entity
 @Table(
         name = "files",
-        uniqueConstraints = @UniqueConstraint(
-                name = "uq_files_object_key",
-                columnNames = "object_key"))
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uq_files_object_key",
+                        columnNames = "object_key"),
+                // Declared here only so test schemas built by Hibernate
+                // (create-drop, Flyway disabled) also carry the filename
+                // uniqueness index the Flyway V7 migration creates in real
+                // databases; at runtime ddl-auto is off and the real index is
+                // owned by the migration, so this declaration is inert there.
+                @UniqueConstraint(
+                        name = "uq_files_owner_folder_name",
+                        columnNames = {"owner_id", "folder_id", "name"})})
 public class File {
 
     @Id
@@ -60,6 +69,10 @@ public class File {
 
     @Column
     private String checksum;
+
+    @jakarta.persistence.Version
+    @Column(name = "row_version", nullable = false)
+    private long rowVersion;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;

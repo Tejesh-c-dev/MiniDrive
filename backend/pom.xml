@@ -23,6 +23,7 @@
 
     <properties>
         <java.version>17</java.version>
+        <minidrive.live-minio>false</minidrive.live-minio>
     </properties>
 
     <dependencies>
@@ -147,10 +148,22 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <argLine>-Duser.timezone=UTC</argLine>
+                    <systemPropertyVariables>
+                        <minidrive.live-minio>${minidrive.live-minio}</minidrive.live-minio>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
 
         </plugins>
     </build>
+
+    <profiles>
+        <profile>
+            <id>live-minio</id>
+            <properties>
+                <minidrive.live-minio>true</minidrive.live-minio>
+            </properties>
+        </profile>
+    </profiles>
 
 </project>

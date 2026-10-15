@@ -73,3 +73,34 @@ The bucket is private: anonymous access is disabled, so objects are not publicly
 readable or writable. Override the credentials, endpoint and bucket through the
 root `.env` file (see `.env.example`); the backend reads `MINIO_ENDPOINT`,
 `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` and `MINIO_BUCKET`.
+
+The real-MinIO storage integration test is opt-in and is not run by the ordinary
+backend test suite. With a reachable MinIO/Silo server and its test credentials,
+run it from `C:\MiniDrive\backend`:
+
+```powershell
+.\mvnw.cmd '-Plive-minio' `
+  '-Dminidrive.live-minio.endpoint=http://127.0.0.1:9000' `
+  '-Dminidrive.live-minio.access-key=minioadmin' `
+  '-Dminidrive.live-minio.secret-key=minioadmin' `
+  '-Dtest=SiloStorageServiceRealMinioLiveTest' test
+```
+
+The test creates and removes a disposable bucket and only uses objects under its
+own run-specific prefixes. Replace the endpoint and credentials with those for
+the real test server.
+
+## Upload retries and integrity
+
+Chunked upload session creation accepts an optional `Idempotency-Key` header.
+The key is scoped to the authenticated caller and session-creation operation;
+retries with the same metadata return the original session, while a changed
+payload returns `400`. Completion is durably idempotent by the owner-scoped
+upload session ID: repeating completion returns the file/version already
+recorded on that session. The backend computes SHA-256 while streaming content
+and stores it on the current file and its immutable version. Resumable completion
+checks staged chunk hashes before finalizing metadata.
+
+Physical content deduplication is deferred. The current deletion lifecycle treats
+each file version as owning its object, so sharing object keys needs transactional
+reference tracking before objects can safely be reused.

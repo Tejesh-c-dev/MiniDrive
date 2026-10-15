@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.io.InputStream;
@@ -45,11 +46,12 @@ public class UploadController {
     @PostMapping(path = "/api/uploads", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<UploadSessionResponse> create(
             @Valid @RequestBody CreateUploadSessionRequest request,
+            @RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
             Authentication authentication) {
 
         return ResponseEntity
                 .status(HttpStatus.CREATED)
-                .body(uploadSessionService.createSession(authentication, request));
+                .body(uploadSessionService.createSession(authentication, request, idempotencyKey));
     }
 
     /** Returns the session status and the sorted indexes already persisted. */

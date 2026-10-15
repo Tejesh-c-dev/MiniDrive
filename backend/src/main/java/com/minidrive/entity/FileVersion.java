@@ -73,6 +73,9 @@ public class FileVersion {
     @Column(name = "size_bytes", nullable = false)
     private long sizeBytes;
 
+    @Column(name = "checksum", length = 64)
+    private String checksum;
+
     /** The user who uploaded this version, which may differ from the file owner. */
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "created_by", nullable = false)
@@ -93,6 +96,12 @@ public class FileVersion {
             String contentType,
             long sizeBytes,
             User createdBy) {
+        this(file, versionNumber, objectKey, originalFilename, contentType, sizeBytes, createdBy, null);
+    }
+
+    public FileVersion(
+            File file, int versionNumber, String objectKey, String originalFilename,
+            String contentType, long sizeBytes, User createdBy, String checksum) {
         this.file = file;
         this.versionNumber = versionNumber;
         this.objectKey = objectKey;
@@ -100,6 +109,7 @@ public class FileVersion {
         this.contentType = contentType;
         this.sizeBytes = sizeBytes;
         this.createdBy = createdBy;
+        this.checksum = checksum;
     }
 
     public UUID getId() {
@@ -129,6 +139,8 @@ public class FileVersion {
     public long getSizeBytes() {
         return sizeBytes;
     }
+
+    public String getChecksum() { return checksum; }
 
     public User getCreatedBy() {
         return createdBy;

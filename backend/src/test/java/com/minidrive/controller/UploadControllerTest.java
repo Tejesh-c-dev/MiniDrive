@@ -116,6 +116,53 @@ class UploadControllerTest {
     }
 
     @Test
+    void idempotentSessionCreationReturnsOriginalAndRejectsChangedPayload() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        String key = "create-session-retry-1";
+        String body = sessionJson("retry.bin", "application/octet-stream", 123);
+        String first = mockMvc.perform(post("/api/uploads")
+                        .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        String firstId = JsonPath.read(first, "$.id");
+        String retry = mockMvc.perform(post("/api/uploads")
+                        .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        assertThat((String) JsonPath.read(retry, "$.id")).isEqualTo(firstId);
+        assertThat(uploadSessionRepository.count()).isEqualTo(1);
+
+        mockMvc.perform(post("/api/uploads")
+                        .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(sessionJson("other.bin", "application/octet-stream", 123)))
+                .andExpect(status().isBadRequest());
+        assertThat(uploadSessionRepository.count()).isEqualTo(1);
+    }
+
+    @Test
+    void simultaneousSessionCreationWithSameKeyReturnsOneSession() throws Exception {
+        registerAndGetToken("Alice", "alice@test.com");
+        com.minidrive.dto.upload.CreateUploadSessionRequest request =
+                new com.minidrive.dto.upload.CreateUploadSessionRequest();
+        request.setFilename("parallel.bin");
+        request.setContentType("application/octet-stream");
+        request.setTotalSizeBytes(123L);
+
+        List<Object> results = runConcurrently(
+                () -> uploadSessionService.createSession(auth("alice@test.com"), request, "parallel-key"),
+                () -> uploadSessionService.createSession(auth("alice@test.com"), request, "parallel-key"));
+
+        assertThat(results).allMatch(com.minidrive.dto.upload.UploadSessionResponse.class::isInstance);
+        assertThat(((com.minidrive.dto.upload.UploadSessionResponse) results.get(0)).getId())
+                .isEqualTo(((com.minidrive.dto.upload.UploadSessionResponse) results.get(1)).getId());
+        assertThat(uploadSessionRepository.count()).isEqualTo(1);
+    }
+
+    @Test
     void zeroByteUploadGetsExactlyOneEmptyChunk() throws Exception {
         String token = registerAndGetToken("Alice", "alice@test.com");
 

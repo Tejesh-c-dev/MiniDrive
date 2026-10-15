@@ -45,6 +45,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -160,6 +162,28 @@ class UploadCompletionControllerTest {
         assertThat(versions.get(0).getVersionNumber()).isEqualTo(1);
         assertThat(versions.get(0).getObjectKey()).isEqualTo(finalKeys().get(0));
         assertThat(versions.get(0).getSizeBytes()).isEqualTo(size);
+        String expectedChecksum = HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(concat(chunk0, chunk1)));
+        assertThat(versions.get(0).getChecksum()).isEqualTo(expectedChecksum);
+        assertThat(fileRepository.findAll().get(0).getChecksum()).isEqualTo(expectedChecksum);
+    }
+
+    @Test
+    void rejectsStagedChunkChecksumMismatchWithoutFinalizing() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        byte[] bytes = patternBytes(32, 7);
+        String sessionId = createSession(token, "checksum.bin", "application/octet-stream", bytes.length);
+        putChunk(token, sessionId, 0, bytes).andExpect(status().isOk());
+        UploadChunk chunk = uploadChunkRepository.findBySessionIdOrderByChunkIndexAsc(
+                UUID.fromString(sessionId)).get(0);
+        stored.put(chunk.getStagingObjectKey(), patternBytes(bytes.length, 99));
+
+        complete(token, sessionId).andExpect(status().isBadRequest());
+
+        assertThat(fileRepository.count()).isZero();
+        assertThat(fileVersionRepository.count()).isZero();
+        assertThat(session(sessionId).getStatus()).isEqualTo(UploadSessionStatus.INITIATED);
+        assertThat(finalKeys()).isEmpty();
     }
 
     @Test

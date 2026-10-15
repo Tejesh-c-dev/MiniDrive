@@ -38,6 +38,8 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.FilterInputStream;
+import java.security.DigestInputStream;
 import java.io.SequenceInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -131,10 +133,17 @@ public class UploadSessionService {
      * must be within the file-size limit; the chunk size and chunk count are
      * computed server-side so clients cannot request an inconsistent split.
      */
-    @Transactional
     public UploadSessionResponse createSession(
             Authentication authentication,
             CreateUploadSessionRequest request) {
+
+        return createSession(authentication, request, null);
+    }
+
+    public UploadSessionResponse createSession(
+            Authentication authentication,
+            CreateUploadSessionRequest request,
+            String idempotencyKey) {
 
         User owner = currentUser(authentication);
 
@@ -148,6 +157,18 @@ public class UploadSessionService {
         Folder folder = resolveOwnedFolder(owner, request.getFolderId());
         File targetFile = resolveTargetFile(owner, request.getTargetFileId());
 
+        String key = idempotencyKey == null ? null : idempotencyKey.trim();
+        if (key != null && (key.isEmpty() || key.length() > 200)) {
+            throw new IllegalArgumentException("Idempotency-Key must be between 1 and 200 characters");
+        }
+        String requestHash = requestHash(filename, contentType, totalSize,
+                request.getFolderId(), request.getTargetFileId());
+        if (key != null) {
+            UploadSession existing = uploadSessionRepository
+                    .findByOwnerIdAndCreateIdempotencyKey(owner.getId(), key).orElse(null);
+            if (existing != null) return existingSession(existing, requestHash);
+        }
+
         UploadSession session = new UploadSession(
                 owner,
                 folder,
@@ -159,9 +180,30 @@ public class UploadSessionService {
                 totalChunks,
                 UploadSessionStatus.INITIATED,
                 LocalDateTime.now().plus(SESSION_TTL));
+        if (key != null) session.setCreateIdempotency(key, requestHash);
+        try {
+            UploadSession saved = transactionTemplate.execute(status ->
+                    uploadSessionRepository.saveAndFlush(session));
+            return UploadSessionMapper.toResponse(saved);
+        } catch (DataIntegrityViolationException race) {
+            if (key == null) throw race;
+            UploadSession winner = transactionTemplate.execute(status ->
+                    uploadSessionRepository.findByOwnerIdAndCreateIdempotencyKey(owner.getId(), key)
+                            .orElseThrow(() -> race));
+            return existingSession(winner, requestHash);
+        }
+    }
 
-        return UploadSessionMapper.toResponse(
-                uploadSessionRepository.saveAndFlush(session));
+    private UploadSessionResponse existingSession(UploadSession session, String requestHash) {
+        if (!requestHash.equals(session.getCreateRequestHash())) {
+            throw new IllegalArgumentException("Idempotency-Key was already used with a different request");
+        }
+        return UploadSessionMapper.toResponse(session);
+    }
+
+    private String requestHash(String filename, String contentType, long size, UUID folderId, UUID targetId) {
+        String canonical = filename + "\n" + contentType + "\n" + size + "\n" + folderId + "\n" + targetId;
+        return sha256Hex(canonical.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     /** Returns the session status and the sorted indexes already persisted. */
@@ -311,12 +353,16 @@ public class UploadSessionService {
         // Assemble and store the final object before any metadata is written. If
         // this fails there is nothing durable to compensate: the session stays
         // INITIATED and the client may retry.
-        try (InputStream assembled = assemble(plan.chunks())) {
+        MessageDigest wholeDigest = sha256Digest();
+        try (InputStream assembled = new DigestInputStream(assemble(plan.chunks()), wholeDigest)) {
             storageService.upload(
                     objectKey, assembled, plan.totalSizeBytes(), plan.contentType());
         } catch (IOException closeFailure) {
             throw new StorageException("Unable to assemble uploaded chunks", closeFailure);
         } catch (RuntimeException assemblyFailure) {
+            discardObject(objectKey, assemblyFailure);
+            ChecksumMismatchException checksumMismatch = findChecksumMismatch(assemblyFailure);
+            if (checksumMismatch != null) throw checksumMismatch;
             // A concurrent completion may have finalized the session and removed
             // the staging objects while this attempt was still reading them, so a
             // staging read can legitimately fail here. In that case this attempt
@@ -332,8 +378,9 @@ public class UploadSessionService {
 
         CompletionOutcome outcome;
         try {
+            String checksum = HexFormat.of().formatHex(wholeDigest.digest());
             outcome = transactionTemplate.execute(
-                    status -> persistCompletion(plan, objectKey, callerId));
+                    status -> persistCompletion(plan, objectKey, callerId, checksum));
         } catch (RuntimeException databaseFailure) {
             // Metadata did not persist, so the just-written object is orphaned
             // and must be removed; the session is left INITIATED for a retry.
@@ -422,7 +469,7 @@ public class UploadSessionService {
      * without creating anything.
      */
     private CompletionOutcome persistCompletion(
-            CompletionPlan plan, String objectKey, UUID callerId) {
+            CompletionPlan plan, String objectKey, UUID callerId, String checksum) {
 
         UploadSession session = uploadSessionRepository
                 .findByIdAndOwnerIdForUpdate(plan.sessionId(), plan.ownerId())
@@ -449,7 +496,8 @@ public class UploadSessionService {
                     plan.contentType(),
                     plan.totalSizeBytes(),
                     objectKey,
-                    uploader);
+                    uploader,
+                    checksum);
         } else {
             User owner = userRepository.getReferenceById(plan.ownerId());
             Folder folder = plan.folderId() != null
@@ -462,7 +510,8 @@ public class UploadSessionService {
                     plan.contentType(),
                     plan.totalSizeBytes(),
                     objectKey,
-                    uploader);
+                    uploader,
+                    checksum);
         }
 
         session.markCompleted(response.getId(), response.getCurrentVersion());
@@ -568,7 +617,34 @@ public class UploadSessionService {
 
             @Override
             public InputStream nextElement() {
-                return storageService.download(chunks.get(next++).getStagingObjectKey());
+                UploadChunk chunk = chunks.get(next++);
+                MessageDigest digest = sha256Digest();
+                return new FilterInputStream(storageService.download(chunk.getStagingObjectKey())) {
+                    private boolean verified;
+
+                    private void verify() throws IOException {
+                        if (verified) return;
+                        verified = true;
+                        String actual = HexFormat.of().formatHex(digest.digest());
+                        if (chunk.getChecksum() != null && !chunk.getChecksum().equals(actual)) {
+                            throw new ChecksumMismatchException(
+                                    "Uploaded content checksum mismatch for chunk "
+                                            + chunk.getChunkIndex());
+                        }
+                    }
+
+                    @Override public int read() throws IOException {
+                        int value = super.read();
+                        if (value < 0) verify(); else digest.update((byte) value);
+                        return value;
+                    }
+
+                    @Override public int read(byte[] bytes, int offset, int length) throws IOException {
+                        int count = super.read(bytes, offset, length);
+                        if (count < 0) verify(); else digest.update(bytes, offset, count);
+                        return count;
+                    }
+                };
             }
         };
 
@@ -646,6 +722,18 @@ public class UploadSessionService {
 
     /** Outcome of the locked persistence step. */
     private record CompletionOutcome(boolean objectConsumed, FileUploadResponse response) {
+    }
+
+    private ChecksumMismatchException findChecksumMismatch(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof ChecksumMismatchException mismatch) return mismatch;
+            if (cause.getCause() == cause) break;
+        }
+        return null;
+    }
+
+    private static final class ChecksumMismatchException extends IllegalArgumentException {
+        private ChecksumMismatchException(String message) { super(message); }
     }
 
     /**
@@ -747,6 +835,14 @@ public class UploadSessionService {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             return HexFormat.of().formatHex(digest.digest(data));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
+    }
+
+    private MessageDigest sha256Digest() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 is not available", e);
         }

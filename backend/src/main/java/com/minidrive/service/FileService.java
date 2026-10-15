@@ -32,6 +32,10 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
 import java.util.List;
 import java.util.Map;
@@ -86,21 +90,24 @@ public class FileService {
         assertNameAvailable(owner, folder, name);
         String objectKey = buildObjectKey(owner.getId(), name);
 
-        try (var input = multipartFile.getInputStream()) {
+        MessageDigest digest = sha256Digest();
+        try (var input = new DigestInputStream(multipartFile.getInputStream(), digest)) {
             storageService.upload(objectKey, input, size, contentType);
         } catch (IOException e) {
             throw new StorageException("Unable to read uploaded file", e);
         }
 
         try {
+            String checksum = HexFormat.of().formatHex(digest.digest());
             File file = new File(owner, folder, name, contentType, size, null);
             file.setObjectKey(objectKey);
+            file.setChecksum(checksum);
             File saved = saveNewFileReconcilingNameConflict(owner, folder, file);
             // First content for this logical file is version 1. Persisting the
             // version inside the same transaction keeps metadata and history
             // consistent: a failure rolls both back and the object is cleaned up.
             fileVersionRepository.saveAndFlush(
-                    new FileVersion(saved, 1, objectKey, name, contentType, size, owner));
+                    new FileVersion(saved, 1, objectKey, name, contentType, size, owner, checksum));
             return FileMapper.toUploadResponse(saved, "UPLOADED", 1);
         } catch (RuntimeException databaseFailure) {
             try {
@@ -244,6 +251,25 @@ public class FileService {
         file.setFolder(targetFolder);
         file.setName(targetName);
 
+        if (changed) {
+            // The rename/move pre-check is also a check-then-write. A concurrent
+            // insert into the same (owner, folder, name) target slot turns the
+            // commit-time flush of these columns into a filename-uniqueness
+            // violation, and without an explicit flush here that failure escapes
+            // the method body as a transaction commit error and surfaces to the
+            // client as {@code 500}. Flushing inside the method lets the same
+            // translation applied to creation handle it.
+            try {
+                fileRepository.saveAndFlush(file);
+            } catch (DataIntegrityViolationException violation) {
+                if (isFilenameUniquenessViolation(violation)) {
+                    throw new IllegalArgumentException(
+                            "A file with this name already exists in this folder");
+                }
+                throw violation;
+            }
+        }
+
         if (request.getContentType() != null) {
             file.setContentType(normalizeAndValidateContentType(request.getContentType()));
         }
@@ -316,21 +342,25 @@ public class FileService {
 
         String objectKey = buildObjectKey(fileOwner.getId(), originalFilename);
 
-        try (var input = multipartFile.getInputStream()) {
+        MessageDigest digest = sha256Digest();
+        try (var input = new DigestInputStream(multipartFile.getInputStream(), digest)) {
             storageService.upload(objectKey, input, size, contentType);
         } catch (IOException e) {
             throw new StorageException("Unable to read uploaded file", e);
         }
 
         try {
-            int versionNumber = nextVersionNumber(file.getId());
+            String checksum = HexFormat.of().formatHex(digest.digest());
+            File lockedFile = fileRepository.findByIdForUpdate(file.getId())
+                    .orElseThrow(() -> new ResourceNotFoundException("File not found"));
+            int versionNumber = nextVersionNumber(lockedFile.getId());
 
-            file.setObjectKey(objectKey);
-            file.setContentType(contentType);
-            file.setSizeBytes(size);
-            file.setChecksum(null);
+            lockedFile.setObjectKey(objectKey);
+            lockedFile.setContentType(contentType);
+            lockedFile.setSizeBytes(size);
+            lockedFile.setChecksum(checksum);
 
-            File saved = fileRepository.saveAndFlush(file);
+            File saved = fileRepository.saveAndFlush(lockedFile);
             fileVersionRepository.saveAndFlush(new FileVersion(
                     saved,
                     versionNumber,
@@ -338,7 +368,8 @@ public class FileService {
                     originalFilename,
                     contentType,
                     size,
-                    caller));
+                    caller,
+                    checksum));
 
             return FileMapper.toUploadResponse(saved, "UPLOADED", versionNumber);
         } catch (RuntimeException databaseFailure) {
@@ -376,17 +407,19 @@ public class FileService {
             String contentType,
             long sizeBytes,
             String objectKey,
-            User createdBy) {
+            User createdBy,
+            String checksum) {
 
         assertNameAvailable(owner, folder, name);
 
         File file = new File(owner, folder, name, contentType, sizeBytes, null);
         file.setObjectKey(objectKey);
+        file.setChecksum(checksum);
         File saved = saveNewFileReconcilingNameConflict(owner, folder, file);
         // First content for this logical file is version 1, matching the
         // single-shot upload flow.
         fileVersionRepository.saveAndFlush(
-                new FileVersion(saved, 1, objectKey, name, contentType, sizeBytes, createdBy));
+                new FileVersion(saved, 1, objectKey, name, contentType, sizeBytes, createdBy, checksum));
         return FileMapper.toUploadResponse(saved, "UPLOADED", 1);
     }
 
@@ -408,16 +441,19 @@ public class FileService {
             String contentType,
             long sizeBytes,
             String objectKey,
-            User createdBy) {
+            User createdBy,
+            String checksum) {
 
-        int versionNumber = nextVersionNumber(targetFile.getId());
+        File lockedFile = fileRepository.findByIdForUpdate(targetFile.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("File not found"));
+        int versionNumber = nextVersionNumber(lockedFile.getId());
 
-        targetFile.setObjectKey(objectKey);
-        targetFile.setContentType(contentType);
-        targetFile.setSizeBytes(sizeBytes);
-        targetFile.setChecksum(null);
+        lockedFile.setObjectKey(objectKey);
+        lockedFile.setContentType(contentType);
+        lockedFile.setSizeBytes(sizeBytes);
+        lockedFile.setChecksum(checksum);
 
-        File saved = fileRepository.saveAndFlush(targetFile);
+        File saved = fileRepository.saveAndFlush(lockedFile);
         fileVersionRepository.saveAndFlush(new FileVersion(
                 saved,
                 versionNumber,
@@ -425,7 +461,8 @@ public class FileService {
                 originalFilename,
                 contentType,
                 sizeBytes,
-                createdBy));
+                createdBy,
+                checksum));
 
         return FileMapper.toUploadResponse(saved, "UPLOADED", versionNumber);
     }
@@ -533,14 +570,16 @@ public class FileService {
         }
 
         try {
-            int versionNumber = nextVersionNumber(file.getId());
+            File lockedFile = fileRepository.findByIdForUpdate(file.getId())
+                    .orElseThrow(() -> new ResourceNotFoundException("File not found"));
+            int versionNumber = nextVersionNumber(lockedFile.getId());
 
-            file.setObjectKey(objectKey);
-            file.setContentType(version.getContentType());
-            file.setSizeBytes(version.getSizeBytes());
-            file.setChecksum(null);
+            lockedFile.setObjectKey(objectKey);
+            lockedFile.setContentType(version.getContentType());
+            lockedFile.setSizeBytes(version.getSizeBytes());
+            lockedFile.setChecksum(version.getChecksum());
 
-            File saved = fileRepository.saveAndFlush(file);
+            File saved = fileRepository.saveAndFlush(lockedFile);
             fileVersionRepository.saveAndFlush(new FileVersion(
                     saved,
                     versionNumber,
@@ -548,7 +587,8 @@ public class FileService {
                     version.getOriginalFilename(),
                     version.getContentType(),
                     version.getSizeBytes(),
-                    caller));
+                    caller,
+                    version.getChecksum()));
 
             return FileMapper.toMetadataResponse(saved, versionNumber);
         } catch (RuntimeException databaseFailure) {
@@ -685,10 +725,16 @@ public class FileService {
      * <p>{@link #assertNameAvailable} is a check-then-insert and can race with a
      * concurrent create for the same (owner, folder, name); the unique index
      * {@code uq_files_owner_folder_name} is the real guard and rejects the loser.
-     * Re-checking the name on failure lets a genuine race surface as the standard
-     * {@code 400} "name already exists" response, while any other integrity
-     * failure (for example a versioning or key conflict) is rethrown unchanged so
-     * it is never mistaken for a filename conflict.</p>
+     * The violation is recognized by its constraint name and translated to the
+     * standard {@code 400} "name already exists" response, while any other
+     * integrity failure (for example a versioning or key conflict) is rethrown
+     * unchanged so it is never mistaken for a filename conflict.</p>
+     *
+     * <p>The translation deliberately does not re-query availability inside the
+     * catch block: after the insert failed, the surrounding PostgreSQL
+     * transaction is already aborted, so any further SQL there fails with a
+     * spurious error that would surface to the client as {@code 500}. Identifying
+     * the violation from the exception itself needs no further statement.</p>
      */
     private File saveNewFileReconcilingNameConflict(
             User owner, Folder folder, File file) {
@@ -696,12 +742,38 @@ public class FileService {
         try {
             return fileRepository.saveAndFlush(file);
         } catch (DataIntegrityViolationException violation) {
-            if (nameExists(owner, folder, file.getName())) {
+            if (isFilenameUniquenessViolation(violation)) {
                 throw new IllegalArgumentException(
                         "A file with this name already exists in this folder");
             }
             throw violation;
         }
+    }
+
+    /**
+     * Reports whether the exception chain carries the database's
+     * filename-uniqueness violation for {@code uq_files_owner_folder_name}.
+     *
+     * <p>PostgreSQL reports the constraint name in the server error message; H2
+     * reports the constraint (upper-cased) in its unique-index violation
+     * message. Matching the constraint name case-insensitively across the cause
+     * chain is therefore portable, and anything that does not name this index
+     * is returned as {@code false} so unrelated integrity failures are never
+     * reinterpreted as a client-facing filename conflict.</p>
+     */
+    private boolean isFilenameUniquenessViolation(Throwable failure) {
+
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            String message = cause.getMessage();
+            if (message != null && message.toLowerCase()
+                    .contains("uq_files_owner_folder_name")) {
+                return true;
+            }
+            if (cause.getCause() == cause) {
+                break;
+            }
+        }
+        return false;
     }
 
     private String normalizeAndValidateName(String name) {
@@ -785,6 +857,14 @@ public class FileService {
                 .findTopByFileIdOrderByVersionNumberDesc(fileId)
                 .map(version -> version.getVersionNumber() + 1)
                 .orElse(1);
+    }
+
+    private MessageDigest sha256Digest() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is not available", e);
+        }
     }
 
     /**

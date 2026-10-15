@@ -34,7 +34,9 @@ import java.util.UUID;
  * persistence belong to Phase 8.4.</p>
  */
 @Entity
-@Table(name = "upload_sessions")
+@Table(name = "upload_sessions", uniqueConstraints = @jakarta.persistence.UniqueConstraint(
+        name = "uq_upload_sessions_owner_idempotency",
+        columnNames = {"owner_id", "create_idempotency_key"}))
 public class UploadSession {
 
     @Id
@@ -97,6 +99,16 @@ public class UploadSession {
     /** The version produced by completion; {@code null} until the session completes. */
     @Column(name = "completed_version_number")
     private Integer completedVersionNumber;
+
+    @jakarta.persistence.Version
+    @Column(name = "row_version", nullable = false)
+    private long rowVersion;
+
+    @Column(name = "create_idempotency_key", length = 200)
+    private String createIdempotencyKey;
+
+    @Column(name = "create_request_hash", length = 64)
+    private String createRequestHash;
 
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
@@ -189,6 +201,15 @@ public class UploadSession {
 
     public LocalDateTime getCompletedAt() {
         return completedAt;
+    }
+
+    public String getCreateIdempotencyKey() { return createIdempotencyKey; }
+
+    public String getCreateRequestHash() { return createRequestHash; }
+
+    public void setCreateIdempotency(String key, String requestHash) {
+        this.createIdempotencyKey = key;
+        this.createRequestHash = requestHash;
     }
 
     public void setStatus(UploadSessionStatus status) {

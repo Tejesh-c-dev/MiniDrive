@@ -23,6 +23,8 @@ public interface UploadSessionRepository extends JpaRepository<UploadSession, UU
      */
     Optional<UploadSession> findByIdAndOwnerId(UUID id, UUID ownerId);
 
+    Optional<UploadSession> findByOwnerIdAndCreateIdempotencyKey(UUID ownerId, String key);
+
     /**
      * Owner-scoped lookup that takes a row-level write lock, used to serialize
      * concurrent completion attempts for the same session. The second attempt

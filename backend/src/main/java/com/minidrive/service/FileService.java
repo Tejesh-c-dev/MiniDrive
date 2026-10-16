@@ -38,10 +38,8 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 @Service
 public class FileService {
@@ -59,19 +57,28 @@ public class FileService {
     private final StorageService storageService;
     private final FileAccessService fileAccessService;
 
+    /**
+     * Read-through cache for the owner's file listings (Phase 10.3). It holds no
+     * authorization state: this service authenticates and authorizes every
+     * request first, then asks the cache for the already-authorized result.
+     */
+    private final FileListingCache fileListingCache;
+
     public FileService(
             FileRepository fileRepository,
             FileVersionRepository fileVersionRepository,
             FolderRepository folderRepository,
             UserRepository userRepository,
             StorageService storageService,
-            FileAccessService fileAccessService) {
+            FileAccessService fileAccessService,
+            FileListingCache fileListingCache) {
         this.fileRepository = fileRepository;
         this.fileVersionRepository = fileVersionRepository;
         this.folderRepository = folderRepository;
         this.userRepository = userRepository;
         this.storageService = storageService;
         this.fileAccessService = fileAccessService;
+        this.fileListingCache = fileListingCache;
     }
 
     @Transactional
@@ -108,6 +115,7 @@ public class FileService {
             // consistent: a failure rolls both back and the object is cleaned up.
             fileVersionRepository.saveAndFlush(
                     new FileVersion(saved, 1, objectKey, name, contentType, size, owner, checksum));
+            fileListingCache.evictAfterCommit();
             return FileMapper.toUploadResponse(saved, "UPLOADED", 1);
         } catch (RuntimeException databaseFailure) {
             try {
@@ -142,11 +150,25 @@ public class FileService {
         // version 1 for this logical file.
         file.setObjectKey(buildObjectKey(owner.getId()));
 
+        File saved = saveNewFileReconcilingNameConflict(owner, folder, file);
+
         // Metadata-only registration stores no content, so its current version is 0.
-        return FileMapper.toUploadResponse(
-                saveNewFileReconcilingNameConflict(owner, folder, file), 0);
+        fileListingCache.evictAfterCommit();
+
+        return FileMapper.toUploadResponse(saved, 0);
     }
 
+    /**
+     * Lists the file summaries the caller owns in one folder, or at the owner's
+     * root when {@code folderId} is {@code null}.
+     *
+     * <p>Identity and access are resolved on every request, before the cache is
+     * consulted: the caller comes from the authenticated principal and a folder
+     * owned by somebody else is rejected with {@code 403} whether or not a
+     * cached listing for the caller already exists. The cache therefore only
+     * ever answers a request whose authorization has already passed, and a hit
+     * can never bypass an ownership check.</p>
+     */
     @Transactional(readOnly = true)
     public List<FileResponse> listInFolder(
             Authentication authentication,
@@ -155,16 +177,18 @@ public class FileService {
         User owner = currentUser(authentication);
 
         if (folderId == null) {
-            return toSummaries(fileRepository
-                    .findByOwnerIdAndFolderIdIsNull(owner.getId()));
+            return fileListingCache.findOwnedFileSummaries(owner.getId(), null);
         }
 
         Folder folder = getOwnedFolder(owner, folderId);
 
-        return toSummaries(fileRepository
-                .findByOwnerIdAndFolderId(owner.getId(), folder.getId()));
+        return fileListingCache.findOwnedFileSummaries(owner.getId(), folder.getId());
     }
 
+    /**
+     * Folder-scoped form of {@link #listInFolder}: same owner-scoped query, same
+     * cache entry, same authorization ordering.
+     */
     @Transactional(readOnly = true)
     public List<FileResponse> listInOwnedFolder(
             Authentication authentication,
@@ -173,8 +197,7 @@ public class FileService {
         User owner = currentUser(authentication);
         Folder folder = getOwnedFolder(owner, folderId);
 
-        return toSummaries(fileRepository
-                .findByOwnerIdAndFolderId(owner.getId(), folder.getId()));
+        return fileListingCache.findOwnedFileSummaries(owner.getId(), folder.getId());
     }
 
     @Transactional(readOnly = true)
@@ -282,6 +305,10 @@ public class FileService {
             file.setChecksum(normalizeChecksum(request.getChecksum()));
         }
 
+        // The file's listing entry can have changed in name, folder, size,
+        // content type or version; clear the affected listings after commit.
+        fileListingCache.evictAfterCommit();
+
         return FileMapper.toMetadataResponse(file, currentVersion(file.getId()));
     }
 
@@ -370,6 +397,7 @@ public class FileService {
                     size,
                     caller,
                     checksum));
+            fileListingCache.evictAfterCommit();
 
             return FileMapper.toUploadResponse(saved, "UPLOADED", versionNumber);
         } catch (RuntimeException databaseFailure) {
@@ -418,8 +446,16 @@ public class FileService {
         File saved = saveNewFileReconcilingNameConflict(owner, folder, file);
         // First content for this logical file is version 1, matching the
         // single-shot upload flow.
-        fileVersionRepository.saveAndFlush(
-                new FileVersion(saved, 1, objectKey, name, contentType, sizeBytes, createdBy, checksum));
+        fileVersionRepository.saveAndFlush(new FileVersion(
+                saved,
+                1,
+                objectKey,
+                name,
+                contentType,
+                sizeBytes,
+                createdBy,
+                checksum));
+        fileListingCache.evictAfterCommit();
         return FileMapper.toUploadResponse(saved, "UPLOADED", 1);
     }
 
@@ -463,6 +499,7 @@ public class FileService {
                 sizeBytes,
                 createdBy,
                 checksum));
+        fileListingCache.evictAfterCommit();
 
         return FileMapper.toUploadResponse(saved, "UPLOADED", versionNumber);
     }
@@ -590,6 +627,8 @@ public class FileService {
                     caller,
                     version.getChecksum()));
 
+            fileListingCache.evictAfterCommit();
+
             return FileMapper.toMetadataResponse(saved, versionNumber);
         } catch (RuntimeException databaseFailure) {
             // Only the just-created restore object is removed; every historical
@@ -638,6 +677,7 @@ public class FileService {
         try {
             fileRepository.delete(file);
             fileRepository.flush();
+            fileListingCache.evictAfterCommit();
         } catch (RuntimeException databaseFailure) {
             // The object cannot be reconstructed without downloading and retaining
             // its bytes, so report the failure and keep the rolled-back row for
@@ -876,29 +916,6 @@ public class FileService {
 
         return fileVersionRepository.findByIdAndFileId(versionId, file.getId())
                 .orElseThrow(() -> new ResourceNotFoundException("Version not found"));
-    }
-
-    /**
-     * Maps files to list summaries, resolving every file's current version in a
-     * single batch query instead of one lookup per file.
-     */
-    private List<FileResponse> toSummaries(List<File> files) {
-
-        if (files.isEmpty()) {
-            return List.of();
-        }
-
-        Map<UUID, Integer> currentVersions = fileVersionRepository
-                .findCurrentVersions(files.stream().map(File::getId).toList())
-                .stream()
-                .collect(Collectors.toMap(
-                        FileVersionRepository.CurrentVersionProjection::getFileId,
-                        FileVersionRepository.CurrentVersionProjection::getCurrentVersion));
-
-        return files.stream()
-                .map(file -> FileMapper.toResponse(
-                        file, currentVersions.getOrDefault(file.getId(), 0)))
-                .toList();
     }
 
     /** Latest version number for a file, or 0 when it has no stored content. */

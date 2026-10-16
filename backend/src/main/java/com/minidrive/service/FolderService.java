@@ -23,11 +23,20 @@ public class FolderService {
     private final FolderRepository folderRepository;
     private final UserRepository userRepository;
 
+    /**
+     * Deleting a folder cascades to the files inside it, so that listing cache
+     * must be evicted too; folder creation and rename leave every file listing
+     * untouched.
+     */
+    private final FileListingCache fileListingCache;
+
     public FolderService(
             FolderRepository folderRepository,
-            UserRepository userRepository) {
+            UserRepository userRepository,
+            FileListingCache fileListingCache) {
         this.folderRepository = folderRepository;
         this.userRepository = userRepository;
+        this.fileListingCache = fileListingCache;
     }
 
     @Transactional
@@ -108,6 +117,10 @@ public class FolderService {
         Folder folder = getOwnedFolder(owner, id);
 
         folderRepository.delete(folder);
+
+        // The database cascades this delete to the folder's files (and to those
+        // of its subfolders), so their cached listing entries must go too.
+        fileListingCache.evictAfterCommit();
     }
 
     private User currentUser(Authentication authentication) {

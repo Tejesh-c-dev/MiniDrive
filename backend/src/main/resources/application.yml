@@ -5,6 +5,18 @@ spring:
   application:
     name: minidrive
 
+  # Redis cache infrastructure (Phase 10.2). The cache TTL, key prefix,
+  # null-value policy and JSON serialization live in CacheConfig. Caching
+  # is connect-only: the backend starts without a running Redis and only
+  # reaches it when a cache operation is first attempted.
+  cache:
+    type: redis
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:56379}
+
   datasource:
     url: ${DB_URL}
     username: ${DB_USERNAME}

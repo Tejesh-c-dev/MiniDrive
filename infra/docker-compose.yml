@@ -45,6 +45,36 @@ services:
       retries: 12
       start_period: 5s
 
+  # Redis cache (Phase 10). Cache-only component: never the source of truth,
+  # so no persistent volume is attached. Persistence is disabled (no RDB
+  # snapshots, no AOF) and an LRU all-keys eviction policy keeps a memory
+  # ceiling appropriate for a development cache. The host port binds to the
+  # loopback interface only; inside the default Compose network the service
+  # is reachable as "redis:6379" by containers joining the same network.
+  redis:
+    image: redis:8.2.10-bookworm
+    container_name: minidrive-redis
+
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+
+    ports:
+      - "127.0.0.1:56379:6379"
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   # One-shot bootstrap: waits for MinIO, then creates the private bucket.
   # Idempotent - re-running `docker compose up` never fails on an existing bucket.
   minio-init:

@@ -35,3 +35,6 @@ node_modules/
 dist/
 *.local
 
+
+# Visual Studio Code workspace settings
+.vscode/

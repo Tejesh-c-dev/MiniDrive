@@ -15,8 +15,8 @@ const maxFailureRate = Number(__ENV.MAX_HTTP_FAILURE_RATE || 0.05);
 if (BASE_URL !== 'http://127.0.0.1:8080') {
   throw new Error('BASE_URL is restricted to http://127.0.0.1:8080');
 }
-if (!['smoke', 'baseline', 'ramp'].includes(PROFILE)) {
-  throw new Error('PROFILE must be smoke, baseline, or ramp');
+if (!['smoke', 'baseline', 'ramp', 'ramp10'].includes(PROFILE)) {
+  throw new Error('PROFILE must be smoke, baseline, ramp, or ramp10');
 }
 if (!Number.isInteger(bytes) || bytes < 1 || bytes > 1048576) {
   throw new Error('FILE_SIZE_BYTES must be an integer from 1 to 1048576');
@@ -34,6 +34,8 @@ if (!Number.isFinite(maxFailureRate) || maxFailureRate <= 0 || maxFailureRate > 
 const uploadDuration = new Trend('minidrive_upload_duration', true);
 const downloadDuration = new Trend('minidrive_download_duration', true);
 const responseStatuses = new Counter('minidrive_response_status_total');
+const rampTargets = PROFILE === 'ramp10' ? [2, 4, 6, 8, 10] : [2, 3, 5];
+const plateauTarget = PROFILE === 'ramp10' ? 10 : 5;
 
 const scenario = PROFILE === 'smoke'
   ? { executor: 'per-vu-iterations', vus: 1, iterations: smokeIterations, maxDuration: '2m' }
@@ -43,9 +45,8 @@ const scenario = PROFILE === 'smoke'
         executor: 'ramping-vus',
         startVUs: 1,
         stages: [
-          { duration: __ENV.RAMP_STAGE_DURATION || '20s', target: 2 },
-          { duration: __ENV.RAMP_STAGE_DURATION || '20s', target: 3 },
-          { duration: __ENV.RAMP_STAGE_DURATION || '20s', target: 5 },
+          ...rampTargets.map((target) => ({ duration: __ENV.RAMP_STAGE_DURATION || '20s', target })),
+          { duration: __ENV.RAMP_HOLD_DURATION || '60s', target: plateauTarget },
         ],
         gracefulRampDown: '5s',
       };

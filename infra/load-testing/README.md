@@ -9,14 +9,16 @@ delete. Credentials and bearer tokens are not printed or stored in the repo.
 
 `minidrive.js` selects exactly one scenario with `PROFILE`: `smoke` (one VU,
 one iteration by default; configurable up to 10), `baseline` (2 VUs for 60s by
-default), or `ramp` (1 to 2 to 3 to 5 VUs, 20s per stage by default). Each
-iteration uploads a 64 KiB fixture by default; `FILE_SIZE_BYTES` is limited to
-1 MiB. Baseline concurrency is limited to 5 VUs. The script refuses any target
-other than `http://127.0.0.1:8080`, requires login credentials, verifies local
-backend health and the Prometheus endpoint before a scenario, and has
-provisional abort guards for HTTP failures and failed checks. Those guards are
-test safeguards, not agreed performance SLOs. The ramp profile is controlled;
-there is no stress or breaking-point scenario.
+default), or `ramp` (1 to 2 to 3 to 5 VUs over 20s per ramp stage by default,
+then a 60s hold at 5 VUs), or `ramp10` (1 to 2 to 4 to 6 to 8 to 10 VUs over
+20s per ramp stage by default, then a 60s hold at 10 VUs). Each iteration
+uploads a 64 KiB fixture by default; `FILE_SIZE_BYTES` is limited to 1 MiB.
+Baseline concurrency is limited to 5 VUs; `ramp10` is limited to 10. The script
+refuses any target other than `http://127.0.0.1:8080`, requires login
+credentials, verifies local backend health and the Prometheus endpoint before
+a scenario, and has provisional abort guards for HTTP failures and failed
+checks. Those guards are test safeguards, not agreed performance SLOs. The
+ramp profiles are controlled; there is no stress or breaking-point scenario.
 
 ## Prepare and run
 
@@ -51,7 +53,8 @@ machine load before running another profile.
 ```powershell
 $env:PROFILE = 'smoke'
 $env:SMOKE_ITERATIONS = '1'
-& $k6 run --summary-export (Join-Path $runDir 'smoke-summary.json') --out json=(Join-Path $runDir 'smoke-metrics.ndjson') $script
+$jsonOut = 'json=' + (Join-Path $runDir 'smoke-metrics.ndjson')
+& $k6 run --summary-export (Join-Path $runDir 'smoke-summary.json') --out $jsonOut $script
 $LASTEXITCODE
 ```
 
@@ -63,18 +66,38 @@ baseline. To change it, set `VUS` (1–5), `DURATION`, and `FILE_SIZE_BYTES`
 $env:PROFILE = 'baseline'
 $env:VUS = '2'
 $env:DURATION = '60s'
-& $k6 run --summary-export (Join-Path $runDir 'baseline-summary.json') --out json=(Join-Path $runDir 'baseline-metrics.ndjson') $script
+$jsonOut = 'json=' + (Join-Path $runDir 'baseline-metrics.ndjson')
+& $k6 run --summary-export (Join-Path $runDir 'baseline-summary.json') --out $jsonOut $script
 ```
 
 The ramp is independently selectable, never run automatically by the baseline.
-It stops at 5 VUs. Set `RAMP_STAGE_DURATION` to change each of the three stages.
+It gradually ramps to 5 VUs and holds there for 60 seconds by default. Set
+`RAMP_STAGE_DURATION` to change each of the three ramp-up stages and
+`RAMP_HOLD_DURATION` to change the plateau. Check the `vus` series in the JSON
+metrics output to confirm it reaches 5 and remains there during the plateau.
 Recheck dependencies and host load between profiles; stop if failures rise,
 health changes, or the development machine becomes overloaded.
 
 ```powershell
 $env:PROFILE = 'ramp'
 $env:RAMP_STAGE_DURATION = '20s'
-& $k6 run --summary-export (Join-Path $runDir 'ramp-summary.json') --out json=(Join-Path $runDir 'ramp-metrics.ndjson') $script
+$env:RAMP_HOLD_DURATION = '60s'
+$jsonOut = 'json=' + (Join-Path $runDir 'ramp-metrics.ndjson')
+& $k6 run --summary-export (Join-Path $runDir 'ramp-summary.json') --out $jsonOut $script
+```
+
+The separate `ramp10` profile gradually raises load from 1 to 10 VUs in five
+20-second stages, then sustains 10 VUs for 60 seconds. Both ramp profiles use
+`RAMP_STAGE_DURATION` for each ramp stage and `RAMP_HOLD_DURATION` for the
+plateau. Inspect the `vus` series in the JSON metrics output to verify that
+the target was reached and sustained.
+
+```powershell
+$env:PROFILE = 'ramp10'
+$env:RAMP_STAGE_DURATION = '20s'
+$env:RAMP_HOLD_DURATION = '60s'
+$jsonOut = 'json=' + (Join-Path $runDir 'ramp10-metrics.ndjson')
+& $k6 run --summary-export (Join-Path $runDir 'ramp10-summary.json') --out $jsonOut $script
 ```
 
 k6 summary reports request rate (`http_reqs`), completed iterations, HTTP

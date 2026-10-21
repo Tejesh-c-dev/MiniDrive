@@ -29,6 +29,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        // Stateless requests do not persist the context in a session. Rebuild
+        // authentication from the original bearer header on MVC async dispatches
+        // so protected streaming responses remain protected through completion.
+        return false;
+    }
+
+    @Override
     protected void doFilterInternal(
             HttpServletRequest request,
             HttpServletResponse response,

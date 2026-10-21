@@ -11,6 +11,7 @@ import com.minidrive.repository.FolderRepository;
 import com.minidrive.repository.PermissionRepository;
 import com.minidrive.repository.UserRepository;
 import com.minidrive.storage.StorageService;
+import io.micrometer.core.instrument.MeterRegistry;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -62,6 +63,7 @@ class FileVersionHistoryControllerTest {
     @Autowired private FolderRepository folderRepository;
     @Autowired private PermissionRepository permissionRepository;
     @Autowired private FileVersionRepository fileVersionRepository;
+    @Autowired private MeterRegistry meterRegistry;
     @MockitoSpyBean private FileRepository fileRepository;
     @MockitoBean private StorageService storageService;
 
@@ -212,6 +214,8 @@ class FileVersionHistoryControllerTest {
 
     @Test
     void editorCanRestoreAnEarlierVersionCreatingANewLatestVersion() throws Exception {
+        double replaceCount = fileTimerCount("replace", "success");
+        double restoreCount = fileTimerCount("restore", "success");
         String alice = registerAndGetToken("Alice", "alice@test.com");
         String carol = registerAndGetToken("Carol", "carol@test.com");
         byte[] first = "alpha".getBytes(StandardCharsets.UTF_8);
@@ -265,6 +269,8 @@ class FileVersionHistoryControllerTest {
         // Every historical object is left untouched.
         verify(storageService, never()).delete(version1.getObjectKey());
         verify(storageService, never()).delete(version3.getObjectKey());
+        assertThat(fileTimerCount("replace", "success")).isEqualTo(replaceCount + 2);
+        assertThat(fileTimerCount("restore", "success")).isEqualTo(restoreCount + 1);
     }
 
     @Test
@@ -453,5 +459,11 @@ class FileVersionHistoryControllerTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()
                 .split("\"token\":\"")[1].split("\"")[0];
+    }
+
+    private double fileTimerCount(String operation, String outcome) {
+        var timer = meterRegistry.find("minidrive_file_operation_seconds")
+                .tag("operation", operation).tag("outcome", outcome).timer();
+        return timer == null ? 0 : timer.count();
     }
 }

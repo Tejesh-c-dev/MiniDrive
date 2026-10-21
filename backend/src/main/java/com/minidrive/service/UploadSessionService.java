@@ -14,6 +14,8 @@ import com.minidrive.entity.User;
 import com.minidrive.exception.ForbiddenException;
 import com.minidrive.exception.ResourceNotFoundException;
 import com.minidrive.exception.StorageException;
+import com.minidrive.metrics.MeasuredOperation;
+import io.micrometer.core.instrument.MeterRegistry;
 import com.minidrive.mapper.FileMapper;
 import com.minidrive.mapper.UploadSessionMapper;
 import com.minidrive.repository.FileRepository;
@@ -106,6 +108,7 @@ public class UploadSessionService {
      * cross a proxy.
      */
     private final TransactionTemplate transactionTemplate;
+    private final MeterRegistry metrics;
 
     public UploadSessionService(
             UploadSessionRepository uploadSessionRepository,
@@ -116,7 +119,8 @@ public class UploadSessionService {
             StorageService storageService,
             FileAccessService fileAccessService,
             FileService fileService,
-            PlatformTransactionManager transactionManager) {
+            PlatformTransactionManager transactionManager,
+            MeterRegistry metrics) {
         this.uploadSessionRepository = uploadSessionRepository;
         this.uploadChunkRepository = uploadChunkRepository;
         this.folderRepository = folderRepository;
@@ -126,6 +130,7 @@ public class UploadSessionService {
         this.fileAccessService = fileAccessService;
         this.fileService = fileService;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.metrics = metrics;
     }
 
     /**
@@ -133,6 +138,7 @@ public class UploadSessionService {
      * must be within the file-size limit; the chunk size and chunk count are
      * computed server-side so clients cannot request an inconsistent split.
      */
+    @MeasuredOperation(value = "create", metric = "minidrive_upload_session_operation_seconds")
     public UploadSessionResponse createSession(
             Authentication authentication,
             CreateUploadSessionRequest request) {
@@ -140,6 +146,7 @@ public class UploadSessionService {
         return createSession(authentication, request, null);
     }
 
+    @MeasuredOperation(value = "create", metric = "minidrive_upload_session_operation_seconds")
     public UploadSessionResponse createSession(
             Authentication authentication,
             CreateUploadSessionRequest request,
@@ -198,6 +205,7 @@ public class UploadSessionService {
         if (!requestHash.equals(session.getCreateRequestHash())) {
             throw new IllegalArgumentException("Idempotency-Key was already used with a different request");
         }
+        event("idempotent_retry", "success");
         return UploadSessionMapper.toResponse(session);
     }
 
@@ -239,6 +247,7 @@ public class UploadSessionService {
      * persistence in its own transaction lets a concurrent same-index insert be
      * caught and reconciled instead of poisoning an outer transaction.</p>
      */
+    @MeasuredOperation(value = "chunk", metric = "minidrive_upload_session_operation_seconds")
     public ChunkUploadResponse ingestChunk(
             Authentication authentication,
             UUID sessionId,
@@ -272,7 +281,9 @@ public class UploadSessionService {
         storageService.upload(
                 stagingKey, new ByteArrayInputStream(data), data.length, OCTET_STREAM);
 
-        return persistChunk(session, chunkIndex, data.length, checksum, stagingKey);
+        ChunkUploadResponse response = persistChunk(session, chunkIndex, data.length, checksum, stagingKey);
+        if (response.isDuplicate()) event("idempotent_retry", "success");
+        return response;
     }
 
     /**
@@ -284,12 +295,14 @@ public class UploadSessionService {
      * session is a no-op so the operation is idempotent.</p>
      */
     @Transactional
+    @MeasuredOperation(value = "abort", metric = "minidrive_upload_session_operation_seconds")
     public void abort(Authentication authentication, UUID sessionId) {
 
         User owner = currentUser(authentication);
         UploadSession session = requireOwnedSession(owner, sessionId);
 
         if (session.getStatus() == UploadSessionStatus.ABORTED) {
+            event("idempotent_retry", "success");
             return;
         }
 
@@ -302,7 +315,13 @@ public class UploadSessionService {
                 uploadChunkRepository.findBySessionIdOrderByChunkIndexAsc(session.getId());
 
         for (UploadChunk chunk : chunks) {
-            storageService.delete(chunk.getStagingObjectKey());
+            try {
+                storageService.delete(chunk.getStagingObjectKey());
+                event("staging_cleanup", "success");
+            } catch (RuntimeException cleanupFailure) {
+                event("staging_cleanup", "failure");
+                throw cleanupFailure;
+            }
         }
 
         uploadChunkRepository.deleteBySessionId(session.getId());
@@ -332,6 +351,7 @@ public class UploadSessionService {
      * corrupt the completed file. A repeated completion of an already-completed
      * session returns the recorded file/version instead of creating a new one.</p>
      */
+    @MeasuredOperation(value = "complete", metric = "minidrive_upload_session_operation_seconds")
     public FileUploadResponse complete(Authentication authentication, UUID sessionId) {
 
         User caller = currentUser(authentication);
@@ -345,6 +365,7 @@ public class UploadSessionService {
                 status -> buildCompletionPlan(callerId, sessionId));
 
         if (plan.alreadyCompleted()) {
+            event("idempotent_retry", "success");
             return plan.completedResponse();
         }
 
@@ -362,7 +383,10 @@ public class UploadSessionService {
         } catch (RuntimeException assemblyFailure) {
             discardObject(objectKey, assemblyFailure);
             ChecksumMismatchException checksumMismatch = findChecksumMismatch(assemblyFailure);
-            if (checksumMismatch != null) throw checksumMismatch;
+            if (checksumMismatch != null) {
+                event("checksum_failure", "failure");
+                throw checksumMismatch;
+            }
             // A concurrent completion may have finalized the session and removed
             // the staging objects while this attempt was still reading them, so a
             // staging read can legitimately fail here. In that case this attempt
@@ -389,6 +413,7 @@ public class UploadSessionService {
         }
 
         if (!outcome.objectConsumed()) {
+            event("idempotent_retry", "success");
             // Another completion won the race; our uploaded object is
             // unreferenced, so we remove it and return the winner's result.
             discardObject(objectKey, null);
@@ -676,7 +701,9 @@ public class UploadSessionService {
         for (UploadChunk chunk : chunks) {
             try {
                 storageService.delete(chunk.getStagingObjectKey());
+                event("staging_cleanup", "success");
             } catch (RuntimeException cleanupFailure) {
+                event("staging_cleanup", "failure");
                 log.warn("Failed to remove staging object {} after successful completion;"
                         + " the completed file is unaffected",
                         chunk.getStagingObjectKey(), cleanupFailure);
@@ -784,11 +811,17 @@ public class UploadSessionService {
 
         try {
             storageService.delete(stagingKey);
+            event("staging_cleanup", "success");
         } catch (RuntimeException cleanupFailure) {
+            event("staging_cleanup", "failure");
             log.error("Failed to clean up staging object {} after chunk persistence failure",
                     stagingKey, cleanupFailure);
             cause.addSuppressed(cleanupFailure);
         }
+    }
+
+    private void event(String name, String outcome) {
+        metrics.counter("minidrive_upload_session_events_total", "event", name, "outcome", outcome).increment();
     }
 
     /**

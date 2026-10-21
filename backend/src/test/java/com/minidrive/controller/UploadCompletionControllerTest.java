@@ -20,6 +20,7 @@ import com.minidrive.repository.UploadSessionRepository;
 import com.minidrive.repository.UserRepository;
 import com.minidrive.service.UploadSessionService;
 import com.minidrive.storage.StorageService;
+import io.micrometer.core.instrument.MeterRegistry;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -61,6 +62,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -78,7 +80,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * without a real MinIO or PostgreSQL instance. This is not a real
  * MinIO/PostgreSQL verification.</p>
  */
-@SpringBootTest
+@SpringBootTest(properties = "management.endpoints.web.exposure.include=health,prometheus")
 @AutoConfigureMockMvc
 class UploadCompletionControllerTest {
 
@@ -93,6 +95,7 @@ class UploadCompletionControllerTest {
     @Autowired private UploadChunkRepository uploadChunkRepository;
     @Autowired private FileVersionRepository fileVersionRepository;
     @Autowired private PermissionRepository permissionRepository;
+    @Autowired private MeterRegistry meterRegistry;
     @MockitoSpyBean private FileRepository fileRepository;
     @MockitoBean private StorageService storageService;
 
@@ -170,6 +173,7 @@ class UploadCompletionControllerTest {
 
     @Test
     void rejectsStagedChunkChecksumMismatchWithoutFinalizing() throws Exception {
+        double checksumFailures = eventCount("checksum_failure", "failure");
         String token = registerAndGetToken("Alice", "alice@test.com");
         byte[] bytes = patternBytes(32, 7);
         String sessionId = createSession(token, "checksum.bin", "application/octet-stream", bytes.length);
@@ -179,6 +183,7 @@ class UploadCompletionControllerTest {
         stored.put(chunk.getStagingObjectKey(), patternBytes(bytes.length, 99));
 
         complete(token, sessionId).andExpect(status().isBadRequest());
+        assertThat(eventCount("checksum_failure", "failure")).isEqualTo(checksumFailures + 1);
 
         assertThat(fileRepository.count()).isZero();
         assertThat(fileVersionRepository.count()).isZero();
@@ -283,8 +288,14 @@ class UploadCompletionControllerTest {
 
     @Test
     void repeatedCompletionIsIdempotent() throws Exception {
+        double createCount = sessionTimerCount("create", "success");
+        double chunkCount = sessionTimerCount("chunk", "success");
+        double completionCount = sessionTimerCount("complete", "success");
+        double retries = eventCount("idempotent_retry", "success");
+        double cleanups = eventCount("staging_cleanup", "success");
         String token = registerAndGetToken("Alice", "alice@test.com");
         String sessionId = createSession(token, "once.bin", "application/octet-stream", 128);
+        putChunk(token, sessionId, 0, patternBytes(128, 3)).andExpect(status().isOk());
         putChunk(token, sessionId, 0, patternBytes(128, 3)).andExpect(status().isOk());
 
         String first = complete(token, sessionId)
@@ -303,6 +314,15 @@ class UploadCompletionControllerTest {
         assertThat(allVersions()).hasSize(1);
         assertThat(finalKeys()).hasSize(1);
         assertThat(session(sessionId).getStatus()).isEqualTo(UploadSessionStatus.COMPLETED);
+        assertThat(sessionTimerCount("create", "success")).isEqualTo(createCount + 1);
+        assertThat(sessionTimerCount("chunk", "success")).isEqualTo(chunkCount + 2);
+        assertThat(sessionTimerCount("complete", "success")).isEqualTo(completionCount + 2);
+        assertThat(eventCount("idempotent_retry", "success")).isEqualTo(retries + 2);
+        assertThat(eventCount("staging_cleanup", "success")).isEqualTo(cleanups + 1);
+        String scrape = mockMvc.perform(get("/actuator/prometheus"))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(scrape).contains(
+                "minidrive_upload_session_operation_seconds_count{application=\"minidrive\",operation=\"create\",outcome=\"success\"}");
     }
 
     @Test
@@ -425,6 +445,7 @@ class UploadCompletionControllerTest {
 
     @Test
     void stagingCleanupFailureDoesNotFailACompletedUpload() throws Exception {
+        double cleanupFailures = eventCount("staging_cleanup", "failure");
         String token = registerAndGetToken("Alice", "alice@test.com");
         String sessionId = createSession(token, "tolerant.bin", "application/octet-stream", 64);
         putChunk(token, sessionId, 0, patternBytes(64, 8)).andExpect(status().isOk());
@@ -433,6 +454,7 @@ class UploadCompletionControllerTest {
                 .when(storageService).delete(startsWith("_uploads/"));
 
         complete(token, sessionId).andExpect(status().isOk());
+        assertThat(eventCount("staging_cleanup", "failure")).isEqualTo(cleanupFailures + 1);
 
         // The completed file is valid even though staging cleanup failed.
         assertThat(fileRepository.count()).isEqualTo(1);
@@ -678,5 +700,17 @@ class UploadCompletionControllerTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()
                 .split("\"token\":\"")[1].split("\"")[0];
+    }
+
+    private double sessionTimerCount(String operation, String outcome) {
+        var timer = meterRegistry.find("minidrive_upload_session_operation_seconds")
+                .tag("operation", operation).tag("outcome", outcome).timer();
+        return timer == null ? 0 : timer.count();
+    }
+
+    private double eventCount(String event, String outcome) {
+        var counter = meterRegistry.find("minidrive_upload_session_events_total")
+                .tag("event", event).tag("outcome", outcome).counter();
+        return counter == null ? 0 : counter.count();
     }
 }

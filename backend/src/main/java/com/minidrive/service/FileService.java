@@ -21,6 +21,7 @@ import com.minidrive.repository.UserRepository;
 import com.minidrive.storage.StorageService;
 import com.minidrive.exception.StorageException;
 import com.minidrive.util.StorageKeys;
+import com.minidrive.metrics.MeasuredOperation;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.core.Authentication;
@@ -82,6 +83,7 @@ public class FileService {
     }
 
     @Transactional
+    @MeasuredOperation("upload")
     public FileUploadResponse upload(Authentication authentication, MultipartFile multipartFile, UUID folderId) {
         User owner = currentUser(authentication);
         if (multipartFile == null || multipartFile.isEmpty()) {
@@ -325,6 +327,7 @@ public class FileService {
      * existing history rather than client input.</p>
      */
     @Transactional
+    @MeasuredOperation("replace")
     public FileUploadResponse replaceContent(
             Authentication authentication,
             UUID id,
@@ -535,6 +538,7 @@ public class FileService {
      * the current one.
      */
     @Transactional(readOnly = true)
+    @MeasuredOperation("download")
     public DownloadedFile downloadVersion(
             Authentication authentication,
             UUID fileId,
@@ -575,6 +579,7 @@ public class FileService {
      * not rename the file.</p>
      */
     @Transactional
+    @MeasuredOperation("restore")
     public FileMetadataResponse restoreVersion(
             Authentication authentication,
             UUID fileId,
@@ -645,6 +650,7 @@ public class FileService {
     }
 
     @Transactional
+    @MeasuredOperation("delete")
     public void delete(
             Authentication authentication,
             UUID id) {
@@ -689,6 +695,7 @@ public class FileService {
     }
 
     @Transactional(readOnly = true)
+    @MeasuredOperation("download")
     public DownloadedFile download(Authentication authentication, UUID id) {
         User caller = currentUser(authentication);
         FileAccessService.FileAccess access = fileAccessService.resolve(caller, id);

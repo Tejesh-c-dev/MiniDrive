@@ -10,6 +10,7 @@ import com.minidrive.repository.ShareLinkRepository;
 import com.minidrive.repository.UserRepository;
 import com.minidrive.security.ShareTokenService;
 import com.minidrive.storage.StorageService;
+import io.micrometer.core.instrument.MeterRegistry;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,6 +36,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 
 /**
  * End-to-end coverage for Phase 6.3: owner-only share-link management plus
@@ -53,6 +55,7 @@ class ShareLinkControllerTest {
     @Autowired private PermissionRepository permissionRepository;
     @Autowired private ShareLinkRepository shareLinkRepository;
     @Autowired private ShareTokenService shareTokenService;
+    @Autowired private MeterRegistry meterRegistry;
     @MockitoBean private StorageService storageService;
 
     @BeforeEach
@@ -137,6 +140,7 @@ class ShareLinkControllerTest {
 
     @Test
     void anonymousCanReadAndDownloadWithoutJwt() throws Exception {
+        double downloads = fileTimerCount("download", "success");
         String alice = registerAndGetToken("Alice", "alice@test.com");
         String fileId = createFileAndGetId(alice, "share.txt", "text/plain", 5);
         String token = createLinkAndGetToken(alice, fileId, null);
@@ -165,6 +169,7 @@ class ShareLinkControllerTest {
         }
         org.junit.jupiter.api.Assertions.assertEquals(
                 "hello", result.getResponse().getContentAsString());
+        org.junit.jupiter.api.Assertions.assertEquals(downloads + 1, fileTimerCount("download", "success"));
         org.mockito.Mockito.verify(storageService).download(file.getObjectKey());
     }
 
@@ -324,12 +329,13 @@ class ShareLinkControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name").value("a.txt"));
 
-        MvcResult result = mockMvc.perform(get("/api/share/" + tokenA + "/download"))
+        MvcResult initial = mockMvc.perform(get("/api/share/" + tokenA + "/download"))
                 .andExpect(status().isOk())
                 .andReturn();
-        if (result.getRequest().isAsyncStarted()) {
-            result.getAsyncResult(5000);
-        }
+        org.junit.jupiter.api.Assertions.assertTrue(initial.getRequest().isAsyncStarted());
+        MvcResult result = mockMvc.perform(asyncDispatch(initial))
+                .andExpect(status().isOk())
+                .andReturn();
         org.junit.jupiter.api.Assertions.assertEquals(
                 "AAA", result.getResponse().getContentAsString());
         org.mockito.Mockito.verify(storageService).download(entityA.getObjectKey());
@@ -436,6 +442,12 @@ class ShareLinkControllerTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()
                 .split("\"token\":\"")[1].split("\"")[0];
+    }
+
+    private double fileTimerCount(String operation, String outcome) {
+        var timer = meterRegistry.find("minidrive_file_operation_seconds")
+                .tag("operation", operation).tag("outcome", outcome).timer();
+        return timer == null ? 0 : timer.count();
     }
 
 }

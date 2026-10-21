@@ -12,6 +12,7 @@ import com.minidrive.repository.UploadSessionRepository;
 import com.minidrive.repository.UserRepository;
 import com.minidrive.service.UploadSessionService;
 import com.minidrive.storage.StorageService;
+import io.micrometer.core.instrument.MeterRegistry;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -73,6 +74,7 @@ class UploadControllerTest {
     @Autowired private FolderRepository folderRepository;
     @Autowired private FileRepository fileRepository;
     @Autowired private UploadSessionRepository uploadSessionRepository;
+    @Autowired private MeterRegistry meterRegistry;
     @MockitoSpyBean private UploadChunkRepository uploadChunkRepository;
     @MockitoBean private StorageService storageService;
 
@@ -445,6 +447,9 @@ class UploadControllerTest {
 
     @Test
     void abortRemovesStagingObjectsAndIsIdempotent() throws Exception {
+        double aborts = sessionTimerCount("abort", "success");
+        double cleanupEvents = eventCount("staging_cleanup", "success");
+        double retries = eventCount("idempotent_retry", "success");
         String token = registerAndGetToken("Alice", "alice@test.com");
         long size = 2L * CHUNK_SIZE + 10;
         String sessionId = createSession(token, "cancel.bin", "application/octet-stream", size);
@@ -472,6 +477,9 @@ class UploadControllerTest {
         mockMvc.perform(delete("/api/uploads/" + sessionId)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isNoContent());
+        assertThat(sessionTimerCount("abort", "success")).isEqualTo(aborts + 2);
+        assertThat(eventCount("staging_cleanup", "success")).isEqualTo(cleanupEvents + 2);
+        assertThat(eventCount("idempotent_retry", "success")).isEqualTo(retries + 1);
     }
 
     @Test
@@ -492,6 +500,7 @@ class UploadControllerTest {
 
     @Test
     void storageFailureDuringChunkUploadDoesNotPersistChunk() throws Exception {
+        double failures = sessionTimerCount("chunk", "failure");
         String token = registerAndGetToken("Alice", "alice@test.com");
         String sessionId = createSession(token, "file.bin", "application/octet-stream", 100);
 
@@ -499,6 +508,7 @@ class UploadControllerTest {
                 .when(storageService).upload(anyString(), any(InputStream.class), anyLong(), anyString());
 
         putChunk(token, sessionId, 0, freshBytes(100)).andExpect(status().isBadGateway());
+        assertThat(sessionTimerCount("chunk", "failure")).isEqualTo(failures + 1);
 
         assertThat(uploadChunkRepository.findBySessionIdOrderByChunkIndexAsc(
                 UUID.fromString(sessionId))).isEmpty();
@@ -609,5 +619,17 @@ class UploadControllerTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()
                 .split("\"token\":\"")[1].split("\"")[0];
+    }
+
+    private double sessionTimerCount(String operation, String outcome) {
+        var timer = meterRegistry.find("minidrive_upload_session_operation_seconds")
+                .tag("operation", operation).tag("outcome", outcome).timer();
+        return timer == null ? 0 : timer.count();
+    }
+
+    private double eventCount(String event, String outcome) {
+        var counter = meterRegistry.find("minidrive_upload_session_events_total")
+                .tag("event", event).tag("outcome", outcome).counter();
+        return counter == null ? 0 : counter.count();
     }
 }

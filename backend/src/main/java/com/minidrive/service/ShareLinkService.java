@@ -10,6 +10,7 @@ import com.minidrive.entity.User;
 import com.minidrive.exception.ForbiddenException;
 import com.minidrive.exception.ResourceNotFoundException;
 import com.minidrive.exception.StorageException;
+import com.minidrive.metrics.MeasuredOperation;
 import com.minidrive.mapper.ShareLinkMapper;
 import com.minidrive.repository.ShareLinkRepository;
 import com.minidrive.repository.UserRepository;
@@ -145,6 +146,7 @@ public class ShareLinkService {
      * caller streams and closes the returned stream.
      */
     @Transactional(readOnly = true)
+    @MeasuredOperation(value = "download", metric = "minidrive_file_operation_seconds")
     public SharedFileDownload download(String token) {
         File file = resolveActiveLink(token).getFile();
 

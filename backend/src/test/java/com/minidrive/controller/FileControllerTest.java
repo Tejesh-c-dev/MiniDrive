@@ -7,6 +7,7 @@ import com.minidrive.entity.File;
 import com.minidrive.repository.FolderRepository;
 import com.minidrive.repository.UserRepository;
 import com.minidrive.storage.StorageService;
+import io.micrometer.core.instrument.MeterRegistry;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,8 +34,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 
-@SpringBootTest
+@SpringBootTest(properties = "management.endpoints.web.exposure.include=health,prometheus")
 @AutoConfigureMockMvc
 class FileControllerTest {
 
@@ -45,6 +47,7 @@ class FileControllerTest {
     @Autowired private FolderRepository folderRepository;
     @MockitoSpyBean private FileRepository fileRepository;
     @Autowired private FileVersionRepository fileVersionRepository;
+    @Autowired private MeterRegistry meterRegistry;
     @MockitoBean private StorageService storageService;
 
     @BeforeEach
@@ -210,6 +213,7 @@ class FileControllerTest {
 
     @Test
     void deleteFileRemovesStorageObjectAndMetadata() throws Exception {
+        double before = timerCount("delete", "success");
         String token = registerAndGetToken("Alice", "alice@test.com");
         String fileId = createFileAndGetId(token, "temp.txt", null, "text/plain", 1);
         File file = fileRepository.findById(UUID.fromString(fileId)).orElseThrow();
@@ -221,6 +225,7 @@ class FileControllerTest {
         org.mockito.Mockito.verify(fileRepository).findByIdAndOwnerId(
                 UUID.fromString(fileId), UUID.fromString(userId("alice@test.com")));
         org.junit.jupiter.api.Assertions.assertEquals(0, fileRepository.count());
+        org.junit.jupiter.api.Assertions.assertEquals(before + 1, timerCount("delete", "success"));
         mockMvc.perform(get("/api/files/" + fileId).header("Authorization", "Bearer " + token))
                 .andExpect(status().isNotFound());
     }
@@ -266,6 +271,7 @@ class FileControllerTest {
 
     @Test
     void storageDeleteFailurePreservesMetadataAndReturnsControlledError() throws Exception {
+        double before = timerCount("delete", "failure");
         String token = registerAndGetToken("Alice", "alice@test.com");
         String fileId = createFileAndGetId(token, "keep.txt", null, "text/plain", 1);
         File file = fileRepository.findById(UUID.fromString(fileId)).orElseThrow();
@@ -277,6 +283,7 @@ class FileControllerTest {
                 .andExpect(jsonPath("$.error").value("File storage operation failed"));
 
         org.junit.jupiter.api.Assertions.assertTrue(fileRepository.findById(UUID.fromString(fileId)).isPresent());
+        org.junit.jupiter.api.Assertions.assertEquals(before + 1, timerCount("delete", "failure"));
         org.mockito.Mockito.verify(fileRepository, org.mockito.Mockito.never()).delete(file);
     }
 
@@ -394,6 +401,7 @@ class FileControllerTest {
     void authenticatedMultipartUploadPersistsMetadataForAuthenticatedOwner() throws Exception {
         String token = registerAndGetToken("Alice", "alice@test.com");
         byte[] bytes = "hello upload".getBytes();
+        double before = timerCount("upload", "success");
         mockMvc.perform(multipart("/api/files")
                         .file(new MockMultipartFile("file", "report.pdf", "application/pdf", bytes))
                         .header("Authorization", "Bearer " + token))
@@ -411,6 +419,10 @@ class FileControllerTest {
                 org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.eq((long) bytes.length),
                 org.mockito.ArgumentMatchers.eq("application/pdf"));
+        org.junit.jupiter.api.Assertions.assertEquals(before + 1, timerCount("upload", "success"));
+        String scrape = mockMvc.perform(get("/actuator/prometheus")).andReturn().getResponse().getContentAsString();
+        org.junit.jupiter.api.Assertions.assertTrue(scrape.contains("minidrive_file_operation_seconds_count{application=\"minidrive\",operation=\"upload\",outcome=\"success\"}"));
+        org.junit.jupiter.api.Assertions.assertFalse(scrape.contains("file_id"));
     }
 
     @Test
@@ -426,6 +438,7 @@ class FileControllerTest {
     @Test
     void storageFailureDoesNotCreateMetadata() throws Exception {
         String token = registerAndGetToken("Alice", "alice@test.com");
+        double before = timerCount("upload", "failure");
         org.mockito.Mockito.doThrow(new com.minidrive.exception.StorageException("failed"))
                 .when(storageService).upload(org.mockito.ArgumentMatchers.anyString(),
                         org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong(),
@@ -435,10 +448,12 @@ class FileControllerTest {
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isBadGateway());
         org.junit.jupiter.api.Assertions.assertEquals(0, fileRepository.count());
+        org.junit.jupiter.api.Assertions.assertEquals(before + 1, timerCount("upload", "failure"));
     }
 
     @Test
     void downloadStreamsOwnedFileWithMetadataHeadersAndHidesOtherOwners() throws Exception {
+        double before = timerCount("download", "success");
         String alice = registerAndGetToken("Alice", "alice@test.com");
         String bob = registerAndGetToken("Bob", "bob@test.com");
         String aliceId = createFileAndGetId(alice, "a\"report\r\n.txt", null, "text/plain", 5);
@@ -448,8 +463,12 @@ class FileControllerTest {
         org.mockito.Mockito.when(storageService.download(aFile.getObjectKey()))
                 .thenReturn(new ByteArrayInputStream("hello".getBytes()));
 
-        var response = mockMvc.perform(get("/api/files/" + aliceId + "/download")
+        var initial = mockMvc.perform(get("/api/files/" + aliceId + "/download")
                         .header("Authorization", "Bearer " + alice))
+                .andExpect(status().isOk())
+                .andReturn();
+        org.junit.jupiter.api.Assertions.assertTrue(initial.getRequest().isAsyncStarted());
+        var response = mockMvc.perform(asyncDispatch(initial))
                 .andExpect(status().isOk())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
                         .contentType("text/plain"))
@@ -457,6 +476,7 @@ class FileControllerTest {
                         .string("Content-Disposition", org.hamcrest.Matchers.containsString("a_report__.txt")))
                 .andReturn().getResponse();
         org.junit.jupiter.api.Assertions.assertEquals("hello", response.getContentAsString());
+        org.junit.jupiter.api.Assertions.assertEquals(before + 1, timerCount("download", "success"));
         org.mockito.Mockito.verify(storageService).download(aFile.getObjectKey());
         org.mockito.Mockito.verify(fileRepository).findByIdAndOwnerId(
                 UUID.fromString(aliceId), UUID.fromString(userId("alice@test.com")));
@@ -612,5 +632,11 @@ class FileControllerTest {
 
     private String userId(String email) {
         return userRepository.findByEmail(email).orElseThrow().getId().toString();
+    }
+
+    private double timerCount(String operation, String outcome) {
+        var timer = meterRegistry.find("minidrive_file_operation_seconds")
+                .tag("operation", operation).tag("outcome", outcome).timer();
+        return timer == null ? 0 : timer.count();
     }
 }

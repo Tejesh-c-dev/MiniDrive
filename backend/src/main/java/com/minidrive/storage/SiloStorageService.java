@@ -6,13 +6,11 @@ import io.minio.GetObjectArgs;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
 
-@Service
 public class SiloStorageService implements StorageService {
     private static final Logger log = LoggerFactory.getLogger(SiloStorageService.class);
     private final MinioClient client;

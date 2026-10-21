@@ -15,3 +15,8 @@ spring:
 jwt:
   secret: test-secret-key-that-is-long-enough-for-hmac-sha
   expiration: 86400000
+
+management:
+  metrics:
+    tags:
+      application: minidrive

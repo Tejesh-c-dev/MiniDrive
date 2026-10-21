@@ -1,0 +1,2 @@
+register_status=201 userId=004ae1ab-f352-4ff9-9652-1340a65f3ac5
+upload_status=201 file_id=9d89a6da-aa8c-4571-8beb-612b78ec64b9 object_key=004ae1ab-f352-4ff9-9652-1340a65f3ac5/a409d336-cae1-4f3c-a570-1bb0e4df7ce7-fixture-one.bin size=4096 checksum=4e441a3533bb2c10cd5649981d395744213e09a336746b5a3458fee4057205ec uploadStatus=UPLOADED

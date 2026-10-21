@@ -1,0 +1,91 @@
+﻿{
+    "project":  "md1272a-20261021-8f3c2a",
+    "backend":  "http://127.0.0.1:18087",
+    "accountId":  "63f9caff-1df2-4a32-a7bf-d29de167cff6",
+    "email":  "phase1272a-20261021-8f3c2a@example.invalid",
+    "sessionId":  "077d9b50-5924-4d84-9075-329668e9ed02",
+    "filename":  "md-phase12-7-2a-8f3c2a.bin",
+    "totalSizeBytes":  5243003,
+    "sourceSha256":  "8b64de48d04c9850121882be0a70525647e957957b3372b5c94068f6b9b5ddbe",
+    "chunkSizeBytes":  5242880,
+    "totalChunks":  2,
+    "interruptionAt":  "2026-10-21T16:23:07.6899241Z",
+    "events":  [
+                   {
+                       "step":  "register",
+                       "at":  "2026-10-21T16:23:06.3941656Z",
+                       "method":  "POST",
+                       "path":  "/api/auth/register",
+                       "status":  201,
+                       "response":  "token redacted; disposable account issued"
+                   },
+                   {
+                       "step":  "create_session",
+                       "at":  "2026-10-21T16:23:06.9835047Z",
+                       "method":  "POST",
+                       "path":  "/api/uploads",
+                       "status":  201,
+                       "response":  {
+                                        "sessionId":  "077d9b50-5924-4d84-9075-329668e9ed02",
+                                        "chunkSizeBytes":  5242880,
+                                        "totalChunks":  2,
+                                        "status":  "INITIATED"
+                                    }
+                   },
+                   {
+                       "step":  "status_before_chunk",
+                       "at":  "2026-10-21T16:23:07.1151019Z",
+                       "method":  "GET",
+                       "path":  "/api/uploads/077d9b50-5924-4d84-9075-329668e9ed02",
+                       "status":  200,
+                       "response":  {
+                                        "id":  "077d9b50-5924-4d84-9075-329668e9ed02",
+                                        "filename":  "md-phase12-7-2a-8f3c2a.bin",
+                                        "contentType":  "application/octet-stream",
+                                        "totalSizeBytes":  5243003,
+                                        "chunkSizeBytes":  5242880,
+                                        "totalChunks":  2,
+                                        "status":  "INITIATED",
+                                        "uploadedChunks":  [
+
+                                                           ],
+                                        "expiresAt":  "2026-10-22T16:23:07.091736"
+                                    }
+                   },
+                   {
+                       "step":  "upload_chunk_0",
+                       "at":  "2026-10-21T16:23:07.1878007Z",
+                       "method":  "PUT",
+                       "path":  "/api/uploads/077d9b50-5924-4d84-9075-329668e9ed02/chunks/0",
+                       "status":  200,
+                       "bytes":  5242880,
+                       "contentType":  "application/octet-stream",
+                       "response":  {
+                                        "sessionId":  "077d9b50-5924-4d84-9075-329668e9ed02",
+                                        "chunkIndex":  0,
+                                        "sizeBytes":  5242880,
+                                        "duplicate":  false
+                                    }
+                   },
+                   {
+                       "step":  "status_at_interruption",
+                       "at":  "2026-10-21T16:23:07.6899241Z",
+                       "method":  "GET",
+                       "path":  "/api/uploads/077d9b50-5924-4d84-9075-329668e9ed02",
+                       "status":  200,
+                       "response":  {
+                                        "id":  "077d9b50-5924-4d84-9075-329668e9ed02",
+                                        "filename":  "md-phase12-7-2a-8f3c2a.bin",
+                                        "contentType":  "application/octet-stream",
+                                        "totalSizeBytes":  5243003,
+                                        "chunkSizeBytes":  5242880,
+                                        "totalChunks":  2,
+                                        "status":  "INITIATED",
+                                        "uploadedChunks":  [
+                                                               0
+                                                           ],
+                                        "expiresAt":  "2026-10-22T16:23:07.091736"
+                                    }
+                   }
+               ]
+}

@@ -1,0 +1,32 @@
+﻿{
+    "runId":  "smoke-20261021T164439Z-7e8b445a",
+    "startedAtUtc":  "2026-10-21T16:44:39.2117606Z",
+    "gitCommit":  "31c3cda9b332340f07b817878205c9d98985ac69",
+    "scriptPath":  "C:\\MiniDrive\\infra\\load-testing\\minidrive.js",
+    "executablePath":  "C:\\Users\\hteju\\AppData\\Local\\MiniDrive\\tools\\k6\\k6.exe",
+    "k6Version":  "k6.exe v2.2.0 (commit/00a9a1b7f5, go1.26.5, windows/amd64)",
+    "commandLine":  "\"C:\\Users\\hteju\\AppData\\Local\\MiniDrive\\tools\\k6\\k6.exe\" run --summary-export \"C:\\MiniDrive\\artifacts\\phase12.7\\performance\\smoke-20261021T164439Z-7e8b445a\\summary.json\" --out \"json=C:\\MiniDrive\\artifacts\\phase12.7\\performance\\smoke-20261021T164439Z-7e8b445a\\metrics.ndjson\" \"C:\\MiniDrive\\infra\\load-testing\\minidrive.js\"",
+    "configuration":  {
+                          "baseUrl":  "http://127.0.0.1:8080",
+                          "profile":  "smoke",
+                          "vus":  1,
+                          "iterations":  1,
+                          "maxDuration":  "2m",
+                          "fileSizeBytes":  65536,
+                          "httpReqFailedThreshold":  "rate\u003c0.05",
+                          "checksThreshold":  "rate\u003e0.95",
+                          "maxHttpFailureRateEnv":  "0.05",
+                          "smokeIterationsEnv":  "1",
+                          "credentialsIdentity":  "k6-test@localhost.test"
+                      },
+    "preflight":  {
+                      "health":  "UP",
+                      "prometheusStatus":  200,
+                      "authentication":  "verified",
+                      "inventoryCount":  1,
+                      "inventoryBaseline":  "inventory-before.redacted.json",
+                      "deleteContract":  "DELETE /api/files/{id} returns 204"
+                  },
+    "processExitCode":  0,
+    "finishedAtUtc":  "2026-10-21T16:44:40.2947065Z"
+}

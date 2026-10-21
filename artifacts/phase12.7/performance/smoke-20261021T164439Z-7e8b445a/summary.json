@@ -1,0 +1,218 @@
+{
+    "root_group": {
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "setup": {
+                "name": "setup",
+                "path": "::setup",
+                "id": "5c0f8025f7e0b6654089e5b00e950f1a",
+                "groups": {},
+                "checks": {
+                        "backend health is UP": {
+                            "id": "73755ff49d98bf84d897f9db35aae5f2",
+                            "passes": 1,
+                            "fails": 0,
+                            "name": "backend health is UP",
+                            "path": "::setup::backend health is UP"
+                        },
+                        "Prometheus endpoint is available": {
+                            "name": "Prometheus endpoint is available",
+                            "path": "::setup::Prometheus endpoint is available",
+                            "id": "75c32081b9e131bcfcc9849118ac7e70",
+                            "passes": 1,
+                            "fails": 0
+                        },
+                        "login succeeds and returns a bearer token": {
+                            "fails": 0,
+                            "name": "login succeeds and returns a bearer token",
+                            "path": "::setup::login succeeds and returns a bearer token",
+                            "id": "87b1d5e3ff9f83960d223e7083703b0d",
+                            "passes": 1
+                        }
+                    }
+            }
+        },
+        "checks": {
+            "auth_me status is 200": {
+                "name": "auth_me status is 200",
+                "path": "::auth_me status is 200",
+                "id": "1a3653ec9153eba6d3127b26f55b8c0d",
+                "passes": 1,
+                "fails": 0
+            },
+            "file_list status is 200": {
+                "id": "13b4ba63f0926e1a727a35ca5b40770a",
+                "passes": 1,
+                "fails": 0,
+                "name": "file_list status is 200",
+                "path": "::file_list status is 200"
+            },
+            "file_upload status is 201": {
+                "id": "de31092b319dc2955f416659c438f685",
+                "passes": 1,
+                "fails": 0,
+                "name": "file_upload status is 201",
+                "path": "::file_upload status is 201"
+            },
+            "upload response has a file id, unique name, and requested size": {
+                "name": "upload response has a file id, unique name, and requested size",
+                "path": "::upload response has a file id, unique name, and requested size",
+                "id": "352847cc6d200ce79fa5231afbe719e7",
+                "passes": 1,
+                "fails": 0
+            },
+            "file_download status is 200": {
+                "name": "file_download status is 200",
+                "path": "::file_download status is 200",
+                "id": "9a96fac124c3d1eaa66322928be185a9",
+                "passes": 1,
+                "fails": 0
+            },
+            "download bytes match uploaded fixture": {
+                "name": "download bytes match uploaded fixture",
+                "path": "::download bytes match uploaded fixture",
+                "id": "0ad46dae03450c4a389158e60c9f7c00",
+                "passes": 1,
+                "fails": 0
+            },
+            "file_delete status is 204": {
+                "name": "file_delete status is 204",
+                "path": "::file_delete status is 204",
+                "id": "c631b90ac2134d608ccde44c0e8aa169",
+                "passes": 1,
+                "fails": 0
+            }
+        },
+        "name": "",
+        "path": ""
+    },
+    "metrics": {
+        "iterations": {
+            "count": 1,
+            "rate": 2.947196552958912
+        },
+        "http_req_failed": {
+            "passes": 0,
+            "fails": 8,
+            "thresholds": {
+                "rate<0.05": false
+            },
+            "value": 0
+        },
+        "http_req_duration{expected_response:true}": {
+            "med": 41.143299999999996,
+            "p(90)": 74.29406999999999,
+            "p(95)": 87.95523499999997,
+            "p(99)": 98.88416699999999,
+            "max": 101.6164,
+            "avg": 41.43965
+        },
+        "data_received": {
+            "count": 125354,
+            "rate": 369442.8766996114
+        },
+        "iteration_duration": {
+            "avg": 167.7847,
+            "med": 167.7847,
+            "p(90)": 167.7847,
+            "p(95)": 167.7847,
+            "p(99)": 167.7847,
+            "max": 167.7847
+        },
+        "http_req_tls_handshaking": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "p(99)": 0,
+            "max": 0,
+            "avg": 0,
+            "med": 0
+        },
+        "http_reqs": {
+            "count": 8,
+            "rate": 23.577572423671295
+        },
+        "checks": {
+            "fails": 0,
+            "passes": 10,
+            "thresholds": {
+                "rate>0.95": false
+            },
+            "value": 1
+        },
+        "http_req_duration": {
+            "avg": 41.43965,
+            "med": 41.143299999999996,
+            "p(90)": 74.29406999999999,
+            "p(95)": 87.95523499999997,
+            "p(99)": 98.88416699999999,
+            "max": 101.6164
+        },
+        "http_req_sending": {
+            "p(90)": 0,
+            "p(95)": 0,
+            "p(99)": 0,
+            "max": 0,
+            "avg": 0,
+            "med": 0
+        },
+        "minidrive_response_status_total": {
+            "count": 8,
+            "rate": 23.577572423671295
+        },
+        "data_sent": {
+            "count": 67933,
+            "rate": 200211.90343215776
+        },
+        "http_req_blocked": {
+            "max": 2.4415,
+            "avg": 0.37846250000000003,
+            "med": 0,
+            "p(90)": 1.1427899999999998,
+            "p(95)": 1.792144999999999,
+            "p(99)": 2.3116289999999995
+        },
+        "http_req_connecting": {
+            "p(95)": 1.792144999999999,
+            "p(99)": 2.3116289999999995,
+            "max": 2.4415,
+            "avg": 0.37846250000000003,
+            "med": 0,
+            "p(90)": 1.1427899999999998
+        },
+        "http_req_waiting": {
+            "p(99)": 97.643605,
+            "max": 100.4197,
+            "avg": 40.4556125,
+            "med": 40.507400000000004,
+            "p(90)": 72.65875,
+            "p(95)": 86.53922499999999
+        },
+        "http_req_receiving": {
+            "avg": 0.9840374999999999,
+            "med": 0.6359,
+            "p(90)": 1.75351,
+            "p(95)": 1.7884049999999998,
+            "p(99)": 1.8163209999999999,
+            "max": 1.8233
+        },
+        "minidrive_upload_duration": {
+            "p(95)": 62.5845,
+            "p(99)": 62.5845,
+            "max": 62.5845,
+            "avg": 62.5845,
+            "med": 62.5845,
+            "p(90)": 62.5845
+        },
+        "minidrive_download_duration": {
+            "p(90)": 27.9787,
+            "p(95)": 27.9787,
+            "p(99)": 27.9787,
+            "max": 27.9787,
+            "avg": 27.9787,
+            "med": 27.9787
+        }
+    },
+    "setup_data": {
+        "token": "eyJhbGciOiJIUzM4NCJ9.eyJzdWIiOiJrNi10ZXN0QGxvY2FsaG9zdC50ZXN0IiwiaWF0IjoxNzkyNjAxMDc5LCJleHAiOjE3OTI2ODc0Nzl9.mBmsLCPHeFiJOFW1v8NPN3pNY-3QSGss2qpZ8nrJmhezrB6sKIs_Qfc9pXi5-BoU"
+    }
+}

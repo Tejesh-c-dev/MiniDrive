@@ -1,0 +1,31 @@
+services:
+  postgres:
+    container_name: md1272-20261021-8f3c2a-postgres
+    ports: !override
+      - "127.0.0.1:55439:5432"
+  minio:
+    container_name: md1272-20261021-8f3c2a-primary
+    ports: !override
+      - "127.0.0.1:9029:9000"
+      - "127.0.0.1:9030:9001"
+  minio-secondary:
+    container_name: md1272-20261021-8f3c2a-secondary
+    ports: !override
+      - "127.0.0.1:9129:9000"
+      - "127.0.0.1:9130:9001"
+  redis:
+    container_name: md1272-20261021-8f3c2a-redis
+    ports: !override
+      - "127.0.0.1:56429:6379"
+  minio-init:
+    container_name: md1272-20261021-8f3c2a-primary-init
+  minio-secondary-init:
+    container_name: md1272-20261021-8f3c2a-secondary-init
+
+volumes:
+  postgres_data:
+    name: md1272-20261021-8f3c2a-postgres-data
+  minio_data:
+    name: md1272-20261021-8f3c2a-primary-data
+  minio_secondary_data:
+    name: md1272-20261021-8f3c2a-secondary-data

@@ -1,0 +1,126 @@
+﻿{
+    "project":  "md1272a-20261021-8f3c2a",
+    "services":  [
+                     {
+                         "name":  "minio",
+                         "container_name":  "md1272a-20261021-8f3c2a-silo",
+                         "image":  "docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z",
+                         "ports":  [
+                                       "9019",
+                                       "9020"
+                                   ],
+                         "networks":  {
+                                          "default":  null
+                                      },
+                         "volumes":  [
+                                         "minio_data"
+                                     ],
+                         "depends_on":  null
+                     },
+                     {
+                         "name":  "minio-init",
+                         "container_name":  "md1272a-20261021-8f3c2a-minio-init",
+                         "image":  "pgsty/mc:RELEASE.2026-09-16T00-00-00Z",
+                         "ports":  [
+
+                                   ],
+                         "networks":  {
+                                          "default":  null
+                                      },
+                         "volumes":  [
+                                         null
+                                     ],
+                         "depends_on":  {
+                                            "minio":  {
+                                                          "condition":  "service_healthy",
+                                                          "required":  true
+                                                      }
+                                        }
+                     },
+                     {
+                         "name":  "minio-secondary",
+                         "container_name":  "md1272a-20261021-8f3c2a-secondary",
+                         "image":  "docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z",
+                         "ports":  [
+                                       "9100",
+                                       "9101"
+                                   ],
+                         "networks":  {
+                                          "default":  null
+                                      },
+                         "volumes":  [
+                                         "minio_secondary_data"
+                                     ],
+                         "depends_on":  null
+                     },
+                     {
+                         "name":  "minio-secondary-init",
+                         "container_name":  "md1272a-20261021-8f3c2a-secondary-init",
+                         "image":  "pgsty/mc:RELEASE.2026-09-16T00-00-00Z",
+                         "ports":  [
+
+                                   ],
+                         "networks":  {
+                                          "default":  null
+                                      },
+                         "volumes":  [
+                                         null
+                                     ],
+                         "depends_on":  {
+                                            "minio-secondary":  {
+                                                                    "condition":  "service_healthy",
+                                                                    "required":  true
+                                                                }
+                                        }
+                     },
+                     {
+                         "name":  "postgres",
+                         "container_name":  "md1272a-20261021-8f3c2a-postgres",
+                         "image":  "postgres:16",
+                         "ports":  [
+                                       "55439"
+                                   ],
+                         "networks":  {
+                                          "default":  null
+                                      },
+                         "volumes":  [
+                                         "postgres_data"
+                                     ],
+                         "depends_on":  null
+                     },
+                     {
+                         "name":  "redis",
+                         "container_name":  "md1272a-20261021-8f3c2a-redis",
+                         "image":  "redis:8.2.10-bookworm",
+                         "ports":  [
+                                       "56419"
+                                   ],
+                         "networks":  {
+                                          "default":  null
+                                      },
+                         "volumes":  [
+                                         null
+                                     ],
+                         "depends_on":  null
+                     }
+                 ],
+    "networks":  {
+                     "default":  {
+                                     "name":  "md1272a-20261021-8f3c2a_default",
+                                     "ipam":  {
+
+                                              }
+                                 }
+                 },
+    "volumes":  {
+                    "minio_data":  {
+                                       "name":  "md1272a-20261021-8f3c2a_minio_data"
+                                   },
+                    "minio_secondary_data":  {
+                                                 "name":  "md1272a-20261021-8f3c2a_minio_secondary_data"
+                                             },
+                    "postgres_data":  {
+                                          "name":  "md1272a-20261021-8f3c2a_postgres_data"
+                                      }
+                }
+}

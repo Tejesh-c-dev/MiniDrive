@@ -1,0 +1,38 @@
+﻿{
+    "runId":  "baseline-20261021T165438Z-8ff31a2e",
+    "gitCommit":  "31c3cda9b332340f07b817878205c9d98985ac69",
+    "scriptPath":  "C:\\MiniDrive\\infra\\load-testing\\minidrive.js",
+    "executablePath":  "C:\\Users\\hteju\\AppData\\Local\\MiniDrive\\tools\\k6\\k6.exe",
+    "k6Version":  "k6.exe v2.2.0 (commit/00a9a1b7f5, go1.26.5, windows/amd64)",
+    "commandLine":  "\"C:\\Users\\hteju\\AppData\\Local\\MiniDrive\\tools\\k6\\k6.exe\" run --out \"json=C:\\MiniDrive\\artifacts\\phase12.7\\performance\\baseline-20261021T165438Z-8ff31a2e\\metrics.ndjson\" \"C:\\MiniDrive\\infra\\load-testing\\minidrive.js\"",
+    "startedAtLocal":  "2026-10-21T22:25:28.3376489+05:30",
+    "startedAtUtc":  "2026-10-21T16:55:28.3426723+00:00",
+    "timezone":  "India Standard Time",
+    "configuration":  {
+                          "baseUrl":  "http://127.0.0.1:8080",
+                          "profile":  "baseline",
+                          "vus":  2,
+                          "duration":  "60s",
+                          "iterationMode":  "constant-vus",
+                          "fileSizeBytes":  65536,
+                          "maxHttpFailureRate":  0.05,
+                          "httpReqFailedThreshold":  "rate\u003c0.05",
+                          "checksThreshold":  "rate\u003e0.95",
+                          "credentialsIdentity":  "k6-test@localhost.test",
+                          "thresholdSummaryFormat":  "legacy summary via handleSummary; K6_NEW_MACHINE_READABLE_SUMMARY unset"
+                      },
+    "finishedAtLocal":  "2026-10-21T22:26:30.8103370+05:30",
+    "finishedAtUtc":  "2026-10-21T16:56:30.8113461+00:00",
+    "processExitCode":  0,
+    "preflight":  {
+                      "backendHealth":  "UP",
+                      "backendPrometheusEndpointHttp":  200,
+                      "postgresRedisStorageNodes":  "4/4 healthy",
+                      "externalPrometheusServer":  "unavailable at 127.0.0.1:9090",
+                      "accountIdentityVerified":  "k6-test@localhost.test",
+                      "inventoryBeforeCount":  3,
+                      "inventoryAfterCount":  3,
+                      "inventoryMatches":  true
+                  },
+    "postRunBackendHealth":  "UP"
+}

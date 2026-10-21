@@ -1,0 +1,8 @@
+﻿{
+    "at":  "2026-10-21T16:24:17.2291039Z",
+    "method":  "DELETE",
+    "path":  "/api/files/2e0869d7-45d1-4d12-96b1-1e10d6931a18",
+    "status":  204,
+    "fileId":  "2e0869d7-45d1-4d12-96b1-1e10d6931a18",
+    "scope":  "test-owned file ID"
+}

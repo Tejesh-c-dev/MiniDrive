@@ -1,0 +1,22 @@
+﻿{
+  "sourceSummary": "summary.json",
+  "sourceSchema": "k6 handleSummary callback; native threshold objects use {\"ok\": true|false}",
+  "legacyInterpretation": "In legacy --summary-export, a direct threshold boolean false means the threshold was not exceeded.",
+  "mapping": "native ok=true maps to legacy not-exceeded=false; this is interpretation only and does not alter threshold expressions or metric values.",
+  "thresholds": {
+    "http_req_failed": {
+      "expression": "rate<0.05",
+      "metricValue": 0,
+      "nativeOk": true,
+      "legacyNotExceededBoolean": false,
+      "result": "PASS"
+    },
+    "checks": {
+      "expression": "rate>0.95",
+      "metricValue": 1,
+      "nativeOk": true,
+      "legacyNotExceededBoolean": false,
+      "result": "PASS"
+    }
+  }
+}

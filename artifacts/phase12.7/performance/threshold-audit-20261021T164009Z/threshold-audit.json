@@ -1,0 +1,27 @@
+﻿{
+    "auditTimestampLocal":  "2026-10-21T22:10:09.4984799+05:30",
+    "auditTimestampUtc":  "2026-10-21T16:40:09.5004809Z",
+    "gitCommit":  "31c3cda9b332340f07b817878205c9d98985ac69",
+    "workingTreeStatus":  "?? artifacts/",
+    "scriptPath":  "C:\\MiniDrive\\infra\\load-testing\\minidrive.js",
+    "runbookPath":  "C:\\MiniDrive\\infra\\load-testing\\README.md",
+    "historicalSummaryOrNdjsonFound":  false,
+    "artifactFilesMatchingHistoricalK6Evidence":  0,
+    "k6Executable":  "C:\\Users\\hteju\\AppData\\Local\\MiniDrive\\tools\\k6\\k6.exe",
+    "k6Version":  "k6.exe v2.2.0 (commit/00a9a1b7f5, go1.26.5, windows/amd64)",
+    "backendUrl":  "http://127.0.0.1:8080",
+    "backendHealth":  "UP",
+    "currentEnvironmentOverrides":  {
+
+                                    },
+    "testIdentity":  {
+                         "credentialFilePresent":  true,
+                         "email":  "k6-test@localhost.test",
+                         "matchesDedicatedAccount":  true,
+                         "passwordPresent":  true
+                     },
+    "workloadsLaunched":  [
+
+                          ],
+    "reasonNoWorkload":  "Historical threshold summaries and NDJSON are absent, so the reported flag/value disagreement cannot be independently reconciled."
+}

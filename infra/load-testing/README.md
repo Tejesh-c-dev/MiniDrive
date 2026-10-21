@@ -54,7 +54,8 @@ machine load before running another profile.
 $env:PROFILE = 'smoke'
 $env:SMOKE_ITERATIONS = '1'
 $jsonOut = 'json=' + (Join-Path $runDir 'smoke-metrics.ndjson')
-& $k6 run --summary-export (Join-Path $runDir 'smoke-summary.json') --out $jsonOut $script
+$env:SUMMARY_PATH = Join-Path $runDir 'smoke-summary.json'
+& $k6 run --out $jsonOut $script
 $LASTEXITCODE
 ```
 
@@ -67,7 +68,8 @@ $env:PROFILE = 'baseline'
 $env:VUS = '2'
 $env:DURATION = '60s'
 $jsonOut = 'json=' + (Join-Path $runDir 'baseline-metrics.ndjson')
-& $k6 run --summary-export (Join-Path $runDir 'baseline-summary.json') --out $jsonOut $script
+$env:SUMMARY_PATH = Join-Path $runDir 'baseline-summary.json'
+& $k6 run --out $jsonOut $script
 ```
 
 The ramp is independently selectable, never run automatically by the baseline.
@@ -83,7 +85,8 @@ $env:PROFILE = 'ramp'
 $env:RAMP_STAGE_DURATION = '20s'
 $env:RAMP_HOLD_DURATION = '60s'
 $jsonOut = 'json=' + (Join-Path $runDir 'ramp-metrics.ndjson')
-& $k6 run --summary-export (Join-Path $runDir 'ramp-summary.json') --out $jsonOut $script
+$env:SUMMARY_PATH = Join-Path $runDir 'ramp-summary.json'
+& $k6 run --out $jsonOut $script
 ```
 
 The separate `ramp10` profile gradually raises load from 1 to 10 VUs in five
@@ -97,11 +100,17 @@ $env:PROFILE = 'ramp10'
 $env:RAMP_STAGE_DURATION = '20s'
 $env:RAMP_HOLD_DURATION = '60s'
 $jsonOut = 'json=' + (Join-Path $runDir 'ramp10-metrics.ndjson')
-& $k6 run --summary-export (Join-Path $runDir 'ramp10-summary.json') --out $jsonOut $script
+$env:SUMMARY_PATH = Join-Path $runDir 'ramp10-summary.json'
+& $k6 run --out $jsonOut $script
 ```
 
 k6 summary reports request rate (`http_reqs`), completed iterations, HTTP
 failure rate, checks, and request duration average, median, p90, p95, and p99.
+Set `SUMMARY_PATH` for each run. The harness writes a sanitized k6 summary
+there, omitting setup data and recursively filtering credential-like fields;
+do not use `--summary-export`, which can include the setup bearer token.
+Threshold evaluation and metric values are retained. Fixture IDs/names and
+their exact deletion statuses are logged for cleanup reconciliation.
 The `minidrive_response_status_total` custom counter tags returned status and
 request name. `minidrive_upload_duration` and `minidrive_download_duration`
 report operation latency; k6's `data_sent` and `data_received` report client

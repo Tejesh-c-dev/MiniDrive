@@ -1,0 +1,6 @@
+083c83954f12|minidrive-minio-secondary-init|Exited (0) 2 hours ago
+61f3261c78c1|minidrive-minio-secondary|Up 3 hours (healthy)
+b97830850315|minidrive-redis|Up 3 hours (healthy)
+bd7f93f54b81|minidrive-minio-init|Exited (0) 2 hours ago
+d416fa24ec34|minidrive-postgres|Up 3 hours (healthy)
+dc7260af8a1a|minidrive-minio|Up 3 hours (healthy)

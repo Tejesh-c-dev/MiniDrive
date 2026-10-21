@@ -694,7 +694,7 @@ public class FileService {
         }
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     @MeasuredOperation("download")
     public DownloadedFile download(Authentication authentication, UUID id) {
         User caller = currentUser(authentication);

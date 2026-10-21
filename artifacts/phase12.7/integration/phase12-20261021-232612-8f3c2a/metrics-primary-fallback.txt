@@ -1,0 +1,8 @@
+minidrive_replication_attempts_total{application="minidrive",operation="healing",outcome="success"} 1.0
+minidrive_replication_attempts_total{application="minidrive",operation="primary",outcome="success"} 1.0
+minidrive_replication_attempts_total{application="minidrive",operation="replication",outcome="failure"} 1.0
+minidrive_replication_healing_total{application="minidrive",outcome="success"} 1.0
+# HELP minidrive_storage_read_fallback_total  
+# TYPE minidrive_storage_read_fallback_total counter
+minidrive_storage_read_fallback_total{application="minidrive",outcome="attempted"} 1.0
+minidrive_storage_read_fallback_total{application="minidrive",outcome="success"} 1.0

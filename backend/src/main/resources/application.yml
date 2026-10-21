@@ -75,6 +75,10 @@ minio:
 
 minidrive:
   storage:
+    replication:
+      enabled: ${MINIDRIVE_REPLICATION_ENABLED:false}
+      primary-node-id: ${MINIDRIVE_PRIMARY_NODE_ID:primary}
+      repair-delay-ms: ${MINIDRIVE_REPAIR_DELAY_MS:30000}
     nodes:
       - id: primary
         endpoint: ${MINIO_ENDPOINT:http://localhost:9000}

@@ -1,0 +1,2 @@
+{"id":"0dfde33c-8806-47ec-bc83-1999f9599ee8","name":"fixture-two.bin","folderId":null,"ownerId":"004ae1ab-f352-4ff9-9652-1340a65f3ac5","objectKey":"004ae1ab-f352-4ff9-9652-1340a65f3ac5/09371d01-c51d-4f5e-a8e4-72746d9d69d7-fixture-two.bin","contentType":"application/octet-stream","sizeBytes":6143,"checksum":"435653d01d6ea621b374ef997b147e451465f3f4d099745e51e2a159906c865b","uploadStatus":"UPLOADED","createdAt":"2026-10-21T18:07:48.9250076","updatedAt":"2026-10-21T18:07:48.9250076","currentVersion":1}
+HTTP_STATUS:201

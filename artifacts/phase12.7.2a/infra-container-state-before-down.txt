@@ -1,0 +1,6 @@
+﻿083c83954f12 minidrive-minio-secondary-init Exited (0) 29 minutes ago
+d416fa24ec34 minidrive-postgres Up About an hour (healthy)
+61f3261c78c1 minidrive-minio-secondary Up About an hour (healthy)
+b97830850315 minidrive-redis Up About an hour (healthy)
+dc7260af8a1a minidrive-minio Up About an hour (healthy)
+bd7f93f54b81 minidrive-minio-init Exited (0) 29 minutes ago

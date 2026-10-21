@@ -1,0 +1,2 @@
+{"id":"9d89a6da-aa8c-4571-8beb-612b78ec64b9","name":"fixture-one.bin","folderId":null,"ownerId":"004ae1ab-f352-4ff9-9652-1340a65f3ac5","objectKey":"004ae1ab-f352-4ff9-9652-1340a65f3ac5/a409d336-cae1-4f3c-a570-1bb0e4df7ce7-fixture-one.bin","contentType":"application/octet-stream","sizeBytes":4096,"checksum":"4e441a3533bb2c10cd5649981d395744213e09a336746b5a3458fee4057205ec","uploadStatus":"UPLOADED","createdAt":"2026-10-21T18:04:19.6501197","updatedAt":"2026-10-21T18:04:19.6501197","currentVersion":1}
+HTTP_STATUS:201

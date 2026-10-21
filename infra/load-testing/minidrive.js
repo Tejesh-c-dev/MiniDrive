@@ -61,6 +61,24 @@ export const options = {
   userAgent: 'MiniDrive-k6-local-load-test/1.0',
 };
 
+function sanitizeSummary(value) {
+  if (Array.isArray(value)) return value.map(sanitizeSummary);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => !/(token|password|secret|credential|authorization)/i.test(key))
+      .map(([key, entry]) => [key, sanitizeSummary(entry)]));
+  }
+  return value;
+}
+
+export function handleSummary(data) {
+  const summary = sanitizeSummary(data);
+  // Setup data contains the bearer token used by VUs. Never persist it in a summary.
+  delete summary.setup_data;
+  const summaryPath = __ENV.SUMMARY_PATH;
+  return summaryPath ? { [summaryPath]: JSON.stringify(summary, null, 2) } : {};
+}
+
 function request(method, path, body, params, expectedStatus, label) {
   const response = http.request(method, `${BASE_URL}${path}`, body, {
     timeout: '30s',
@@ -116,6 +134,7 @@ export default function (data) {
     });
     responseStatuses.add(1, { status: String(uploaded.status), request: 'file_upload' });
     try { fileId = uploaded.json('id'); } catch (_) { /* No returned id means there is no owned resource to delete. */ }
+    if (fileId) console.log(`[fixture] created id=${fileId} name=${filename}`);
     uploadDuration.add(uploaded.timings.duration, { outcome: uploaded.status === 201 ? 'success' : 'failure' });
     if (!check(uploaded, { 'file_upload status is 201': (r) => r.status === 201 })) {
       fail(`file_upload returned HTTP ${uploaded.status}`);
@@ -131,6 +150,9 @@ export default function (data) {
       'download bytes match uploaded fixture': (r) => r.body && r.body.byteLength === bytes,
     })) fail('Download response size did not match the uploaded fixture');
   } finally {
-    if (fileId) request('DELETE', `/api/files/${fileId}`, null, { headers }, 204, 'file_delete');
+    if (fileId) {
+      const deleted = request('DELETE', `/api/files/${fileId}`, null, { headers }, 204, 'file_delete');
+      console.log(`[fixture] cleanup id=${fileId} status=${deleted.status}`);
+    }
   }
 }

@@ -116,6 +116,21 @@ later reads and deletes. Existing versioned files and resumable staging objects
 are backfilled to `primary` by Flyway V15. Keep node IDs stable and configure
 every node referenced by that registry.
 
+Replication is opt-in so existing single-node deployments retain their startup
+and routing behavior. Set `MINIDRIVE_REPLICATION_ENABLED=true` only after both
+Silo nodes and their private buckets are healthy. The configured `primary` node
+is the sole write authority; each immutable content object (including historical
+versions and completed resumable uploads) gets a verified replica status row in
+PostgreSQL. Secondary outages leave the primary object available and mark the
+replica failed with a bounded retry time. Reads validate size and SHA-256 before
+returning bytes and can fall back to a verified secondary copy. A scheduled
+repair pass copies from a verified surviving node and is also exposed through
+the storage service's bounded `repairOnce()` operation for deterministic tests.
+The repair metrics are `minidrive_replication_attempts_total`,
+`minidrive_replication_healing_total`, and
+`minidrive_storage_read_fallback_total`; node operation metrics continue to use
+`minidrive_storage_node_operation_seconds`.
+
 The real-MinIO storage integration test is opt-in and is not run by the ordinary
 backend test suite. With a reachable MinIO/Silo server and its test credentials,
 run it from `C:\MiniDrive\backend`:

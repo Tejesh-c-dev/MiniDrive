@@ -1,0 +1,4 @@
+7d50826849e2556799cbf2fa9900e3fbe60f0e5a982a4b288fec44f7b9ab3543|/md1272-20261021-8f3c2a-postgres|running|healthy|postgres:16
+090b58b67f5977de1b0704d985f3c6dda2b86f269a4e4872cc0216cbf669c666|/md1272-20261021-8f3c2a-primary|running|healthy|docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+511096879bbc07dde08af000ae6bc43d38e7a32b1b6dd0c23ba1e8522788068b|/md1272-20261021-8f3c2a-secondary|running|healthy|docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+51358c7d56ee289aae0f3dfc6c66cf9d9642cb9b173c002693956f94c488c1cd|/md1272-20261021-8f3c2a-redis|running|healthy|redis:8.2.10-bookworm

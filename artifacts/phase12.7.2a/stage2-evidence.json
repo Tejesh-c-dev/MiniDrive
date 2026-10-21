@@ -1,0 +1,183 @@
+﻿{
+    "fileId":  "2e0869d7-45d1-4d12-96b1-1e10d6931a18",
+    "downloadPath":  "C:\\MiniDrive\\artifacts\\phase12.7.2a\\downloaded.bin",
+    "downloadSizeBytes":  5243003,
+    "downloadSha256":  "8b64de48d04c9850121882be0a70525647e957957b3372b5c94068f6b9b5ddbe",
+    "metadata":  {
+                     "id":  "2e0869d7-45d1-4d12-96b1-1e10d6931a18",
+                     "name":  "md-phase12-7-2a-8f3c2a.bin",
+                     "sizeBytes":  5243003,
+                     "contentType":  "application/octet-stream",
+                     "checksum":  "8b64de48d04c9850121882be0a70525647e957957b3372b5c94068f6b9b5ddbe",
+                     "currentVersion":  1
+                 },
+    "sessionAfter":  {
+                         "id":  "077d9b50-5924-4d84-9075-329668e9ed02",
+                         "filename":  "md-phase12-7-2a-8f3c2a.bin",
+                         "contentType":  "application/octet-stream",
+                         "totalSizeBytes":  5243003,
+                         "chunkSizeBytes":  5242880,
+                         "totalChunks":  2,
+                         "status":  "COMPLETED",
+                         "uploadedChunks":  [
+
+                                            ],
+                         "expiresAt":  "2026-10-22T16:23:07.091736"
+                     },
+    "matchingFilenameCount":  1,
+    "versions":  [
+                     {
+                         "value":  [
+                                       {
+                                           "id":  "1a479013-b352-4f61-acf0-809c6866ac6f",
+                                           "versionNumber":  1,
+                                           "originalFilename":  "md-phase12-7-2a-8f3c2a.bin",
+                                           "contentType":  "application/octet-stream",
+                                           "sizeBytes":  5243003,
+                                           "createdById":  "63f9caff-1df2-4a32-a7bf-d29de167cff6",
+                                           "createdByName":  "Phase 12.7.2A Disposable",
+                                           "createdByEmail":  "phase1272a-20261021-8f3c2a@example.invalid",
+                                           "createdAt":  "2026-10-21T16:23:58.657138"
+                                       }
+                                   ],
+                         "Count":  1
+                     }
+                 ],
+    "assertions":  {
+                       "sessionCompleted":  true,
+                       "fileMetadataSize":  true,
+                       "fileMetadataVersion":  true,
+                       "singleLogicalFile":  true,
+                       "oneVersion":  true,
+                       "downloadedSize":  true,
+                       "downloadedHash":  true
+                   },
+    "events":  [
+                   {
+                       "step":  "status_on_resume",
+                       "at":  "2026-10-21T16:23:58.0148801Z",
+                       "method":  "GET",
+                       "path":  "/api/uploads/077d9b50-5924-4d84-9075-329668e9ed02",
+                       "status":  200,
+                       "response":  {
+                                        "id":  "077d9b50-5924-4d84-9075-329668e9ed02",
+                                        "filename":  "md-phase12-7-2a-8f3c2a.bin",
+                                        "contentType":  "application/octet-stream",
+                                        "totalSizeBytes":  5243003,
+                                        "chunkSizeBytes":  5242880,
+                                        "totalChunks":  2,
+                                        "status":  "INITIATED",
+                                        "uploadedChunks":  [
+                                                               0
+                                                           ],
+                                        "expiresAt":  "2026-10-22T16:23:07.091736"
+                                    }
+                   },
+                   {
+                       "step":  "upload_chunk_1",
+                       "at":  "2026-10-21T16:23:58.1004755Z",
+                       "method":  "PUT",
+                       "path":  "/api/uploads/077d9b50-5924-4d84-9075-329668e9ed02/chunks/1",
+                       "status":  200,
+                       "bytes":  123,
+                       "contentType":  "application/octet-stream",
+                       "response":  {
+                                        "sessionId":  "077d9b50-5924-4d84-9075-329668e9ed02",
+                                        "chunkIndex":  1,
+                                        "sizeBytes":  123,
+                                        "duplicate":  false
+                                    }
+                   },
+                   {
+                       "step":  "complete",
+                       "at":  "2026-10-21T16:23:58.1397180Z",
+                       "method":  "POST",
+                       "path":  "/api/uploads/077d9b50-5924-4d84-9075-329668e9ed02/complete",
+                       "status":  200,
+                       "response":  {
+                                        "fileId":  "2e0869d7-45d1-4d12-96b1-1e10d6931a18",
+                                        "name":  "md-phase12-7-2a-8f3c2a.bin",
+                                        "sizeBytes":  5243003,
+                                        "currentVersion":  1,
+                                        "checksum":  "8b64de48d04c9850121882be0a70525647e957957b3372b5c94068f6b9b5ddbe"
+                                    }
+                   },
+                   {
+                       "step":  "status_after_completion",
+                       "at":  "2026-10-21T16:23:58.7387791Z",
+                       "method":  "GET",
+                       "path":  "/api/uploads/077d9b50-5924-4d84-9075-329668e9ed02",
+                       "status":  200,
+                       "response":  {
+                                        "id":  "077d9b50-5924-4d84-9075-329668e9ed02",
+                                        "filename":  "md-phase12-7-2a-8f3c2a.bin",
+                                        "contentType":  "application/octet-stream",
+                                        "totalSizeBytes":  5243003,
+                                        "chunkSizeBytes":  5242880,
+                                        "totalChunks":  2,
+                                        "status":  "COMPLETED",
+                                        "uploadedChunks":  [
+
+                                                           ],
+                                        "expiresAt":  "2026-10-22T16:23:07.091736"
+                                    }
+                   },
+                   {
+                       "step":  "get_metadata",
+                       "at":  "2026-10-21T16:23:58.7593241Z",
+                       "method":  "GET",
+                       "path":  "/api/files/2e0869d7-45d1-4d12-96b1-1e10d6931a18",
+                       "status":  200,
+                       "response":  {
+                                        "id":  "2e0869d7-45d1-4d12-96b1-1e10d6931a18",
+                                        "name":  "md-phase12-7-2a-8f3c2a.bin",
+                                        "sizeBytes":  5243003,
+                                        "contentType":  "application/octet-stream",
+                                        "checksum":  "8b64de48d04c9850121882be0a70525647e957957b3372b5c94068f6b9b5ddbe",
+                                        "currentVersion":  1
+                                    }
+                   },
+                   {
+                       "step":  "list_files",
+                       "at":  "2026-10-21T16:23:58.7931735Z",
+                       "method":  "GET",
+                       "path":  "/api/files",
+                       "status":  200,
+                       "matchingFilenameCount":  1
+                   },
+                   {
+                       "step":  "list_versions",
+                       "at":  "2026-10-21T16:23:58.8965554Z",
+                       "method":  "GET",
+                       "path":  "/api/files/2e0869d7-45d1-4d12-96b1-1e10d6931a18/versions",
+                       "status":  200,
+                       "response":  [
+                                        {
+                                            "value":  [
+                                                          {
+                                                              "id":  "1a479013-b352-4f61-acf0-809c6866ac6f",
+                                                              "versionNumber":  1,
+                                                              "originalFilename":  "md-phase12-7-2a-8f3c2a.bin",
+                                                              "contentType":  "application/octet-stream",
+                                                              "sizeBytes":  5243003,
+                                                              "createdById":  "63f9caff-1df2-4a32-a7bf-d29de167cff6",
+                                                              "createdByName":  "Phase 12.7.2A Disposable",
+                                                              "createdByEmail":  "phase1272a-20261021-8f3c2a@example.invalid",
+                                                              "createdAt":  "2026-10-21T16:23:58.657138"
+                                                          }
+                                                      ],
+                                            "Count":  1
+                                        }
+                                    ]
+                   },
+                   {
+                       "step":  "download",
+                       "at":  "2026-10-21T16:23:58.9164648Z",
+                       "method":  "GET",
+                       "path":  "/api/files/2e0869d7-45d1-4d12-96b1-1e10d6931a18/download",
+                       "status":  200,
+                       "bytes":  5243003,
+                       "sha256":  "8b64de48d04c9850121882be0a70525647e957957b3372b5c94068f6b9b5ddbe"
+                   }
+               ]
+}

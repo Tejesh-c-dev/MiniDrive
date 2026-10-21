@@ -1,0 +1,13 @@
+project=md1272-20261021-8f3c2a
+network=md1272-20261021-8f3c2a_default
+host_ports=55439 postgres; 9029/9030 primary; 9129/9130 secondary; 56429 redis
+volumes=md1272-20261021-8f3c2a-postgres-data; md1272-20261021-8f3c2a-primary-data; md1272-20261021-8f3c2a-secondary-data
+backend=host java jar, port 18080
+DB_URL=jdbc:postgresql://127.0.0.1:55439/md1272
+MINIO_ENDPOINT=http://127.0.0.1:9029
+MINIO_SECONDARY_ENDPOINT=http://127.0.0.1:9129
+REDIS=127.0.0.1:56429
+MINIDRIVE_REPLICATION_ENABLED=true
+MINIDRIVE_PRIMARY_NODE_ID=primary
+MINIDRIVE_REPAIR_DELAY_MS=2000
+secrets=redacted

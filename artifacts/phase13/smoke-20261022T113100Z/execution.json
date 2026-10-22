@@ -1,0 +1,10 @@
+﻿{
+    "runId":  "smoke-20261022T113100Z",
+    "classification":  "interrupted wrapper attempt",
+    "processExitCode":  "unavailable",
+    "reason":  "PowerShell treated native k6 stderr as terminating before the exit code was stored",
+    "summaryAvailable":  false,
+    "onlyInitialSetupHealthMetricWritten":  true,
+    "rawOutputs":  "C:\\Users\\hteju\\AppData\\Local\\Temp\\minidrive-phase13\\smoke-20261022T113100Z",
+    "reconciliation":  "reconciliation-smoke-20261022T113100Z.json"
+}

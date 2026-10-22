@@ -8,6 +8,7 @@ are measured in bytes.
 | --- | --- | --- | --- |
 | `minidrive_file_operation_seconds` | Timer | `operation`, `outcome` | Upload, replacement, restoration, deletion, and authenticated or public-share download method duration. Timer count is the operation count. |
 | `minidrive_storage_node_operation_seconds` | Timer | `operation`, `outcome`, `node_id` | Actual routed storage-node upload and delete call duration, plus download duration through EOF or stream close. |
+| `minidrive_storage_node_health` | Gauge | `node_id` | Configured node and bucket availability: `1` healthy, `0` unhealthy, `-1` before the first probe. Probes run every 15 seconds by default. |
 | `minidrive_storage_node_bytes_total` | Counter | `operation`, `node_id` | Successful known-size upload bytes and bytes read from node download streams. |
 | `minidrive_upload_session_operation_seconds` | Timer | `operation`, `outcome` | Session creation, chunk staging, completion, and abort duration. Timer count is the attempt count. |
 | `minidrive_upload_session_events_total` | Counter | `event`, `outcome` | Distinct idempotent retries, checksum failures, and staging object cleanup outcomes. |

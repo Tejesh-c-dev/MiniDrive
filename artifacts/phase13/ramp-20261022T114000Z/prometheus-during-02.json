@@ -1,0 +1,311 @@
+﻿{
+    "label":  "during-02",
+    "timestampUtc":  "2026-10-22T11:34:26.6414487Z",
+    "prometheus":  {
+                       "up":  {
+                                  "query":  "up{job=\"minidrive\"}",
+                                  "available":  true,
+                                  "result":  [
+                                                 {
+                                                     "metric":  {
+                                                                    "__name__":  "up",
+                                                                    "instance":  "127.0.0.1:8080",
+                                                                    "job":  "minidrive"
+                                                                },
+                                                     "value":  [
+                                                                   1792668866.642,
+                                                                   "1"
+                                                               ]
+                                                 }
+                                             ]
+                              },
+                       "heap":  {
+                                    "query":  "jvm_memory_used_bytes{area=\"heap\",job=\"minidrive\"}",
+                                    "available":  true,
+                                    "result":  [
+                                                   {
+                                                       "metric":  {
+                                                                      "__name__":  "jvm_memory_used_bytes",
+                                                                      "application":  "minidrive",
+                                                                      "area":  "heap",
+                                                                      "id":  "G1 Eden Space",
+                                                                      "instance":  "127.0.0.1:8080",
+                                                                      "job":  "minidrive"
+                                                                  },
+                                                       "value":  [
+                                                                     1792668866.644,
+                                                                     "52428800"
+                                                                 ]
+                                                   },
+                                                   {
+                                                       "metric":  {
+                                                                      "__name__":  "jvm_memory_used_bytes",
+                                                                      "application":  "minidrive",
+                                                                      "area":  "heap",
+                                                                      "id":  "G1 Old Gen",
+                                                                      "instance":  "127.0.0.1:8080",
+                                                                      "job":  "minidrive"
+                                                                  },
+                                                       "value":  [
+                                                                     1792668866.644,
+                                                                     "53841072"
+                                                                 ]
+                                                   },
+                                                   {
+                                                       "metric":  {
+                                                                      "__name__":  "jvm_memory_used_bytes",
+                                                                      "application":  "minidrive",
+                                                                      "area":  "heap",
+                                                                      "id":  "G1 Survivor Space",
+                                                                      "instance":  "127.0.0.1:8080",
+                                                                      "job":  "minidrive"
+                                                                  },
+                                                       "value":  [
+                                                                     1792668866.644,
+                                                                     "556448"
+                                                                 ]
+                                                   }
+                                               ]
+                                },
+                       "cpu":  {
+                                   "query":  "process_cpu_usage{job=\"minidrive\"}",
+                                   "available":  true,
+                                   "result":  [
+                                                  {
+                                                      "metric":  {
+                                                                     "__name__":  "process_cpu_usage",
+                                                                     "application":  "minidrive",
+                                                                     "instance":  "127.0.0.1:8080",
+                                                                     "job":  "minidrive"
+                                                                 },
+                                                      "value":  [
+                                                                    1792668866.645,
+                                                                    "0.02996307298775297"
+                                                                ]
+                                                  }
+                                              ]
+                               },
+                       "httpRate":  {
+                                        "query":  "sum by (method,uri,status) (rate(http_server_requests_seconds_count{job=\"minidrive\"}[1m]))",
+                                        "available":  true,
+                                        "result":  [
+                                                       {
+                                                           "metric":  {
+                                                                          "method":  "GET",
+                                                                          "status":  "200",
+                                                                          "uri":  "/actuator/prometheus"
+                                                                      },
+                                                           "value":  [
+                                                                         1792668866.646,
+                                                                         "0.08888888888888888"
+                                                                     ]
+                                                       },
+                                                       {
+                                                           "metric":  {
+                                                                          "method":  "GET",
+                                                                          "status":  "200",
+                                                                          "uri":  "/actuator/health"
+                                                                      },
+                                                           "value":  [
+                                                                         1792668866.646,
+                                                                         "0.06666666666666665"
+                                                                     ]
+                                                       },
+                                                       {
+                                                           "metric":  {
+                                                                          "method":  "GET",
+                                                                          "status":  "200",
+                                                                          "uri":  "/api/auth/me"
+                                                                      },
+                                                           "value":  [
+                                                                         1792668866.646,
+                                                                         "6.666666666666666"
+                                                                     ]
+                                                       },
+                                                       {
+                                                           "metric":  {
+                                                                          "method":  "GET",
+                                                                          "status":  "200",
+                                                                          "uri":  "/api/files"
+                                                                      },
+                                                           "value":  [
+                                                                         1792668866.646,
+                                                                         "6.666666666666666"
+                                                                     ]
+                                                       },
+                                                       {
+                                                           "metric":  {
+                                                                          "method":  "POST",
+                                                                          "status":  "200",
+                                                                          "uri":  "/api/auth/login"
+                                                                      },
+                                                           "value":  [
+                                                                         1792668866.646,
+                                                                         "0.02222222222222222"
+                                                                     ]
+                                                       },
+                                                       {
+                                                           "metric":  {
+                                                                          "method":  "DELETE",
+                                                                          "status":  "204",
+                                                                          "uri":  "/api/files/{id}"
+                                                                      },
+                                                           "value":  [
+                                                                         1792668866.646,
+                                                                         "6.622222222222222"
+                                                                     ]
+                                                       },
+                                                       {
+                                                           "metric":  {
+                                                                          "method":  "GET",
+                                                                          "status":  "200",
+                                                                          "uri":  "/api/files/{id}/download"
+                                                                      },
+                                                           "value":  [
+                                                                         1792668866.646,
+                                                                         "6.644444444444444"
+                                                                     ]
+                                                       },
+                                                       {
+                                                           "metric":  {
+                                                                          "method":  "POST",
+                                                                          "status":  "201",
+                                                                          "uri":  "/api/files"
+                                                                      },
+                                                           "value":  [
+                                                                         1792668866.646,
+                                                                         "6.644444444444444"
+                                                                     ]
+                                                       }
+                                                   ]
+                                    },
+                       "fileOps":  {
+                                       "query":  "sum by (operation,outcome) (rate(minidrive_file_operation_seconds_count[1m]))",
+                                       "available":  true,
+                                       "result":  [
+                                                      {
+                                                          "metric":  {
+                                                                         "operation":  "delete",
+                                                                         "outcome":  "success"
+                                                                     },
+                                                          "value":  [
+                                                                        1792668866.657,
+                                                                        "6.622222222222222"
+                                                                    ]
+                                                      },
+                                                      {
+                                                          "metric":  {
+                                                                         "operation":  "download",
+                                                                         "outcome":  "success"
+                                                                     },
+                                                          "value":  [
+                                                                        1792668866.657,
+                                                                        "6.644444444444444"
+                                                                    ]
+                                                      },
+                                                      {
+                                                          "metric":  {
+                                                                         "operation":  "upload",
+                                                                         "outcome":  "success"
+                                                                     },
+                                                          "value":  [
+                                                                        1792668866.657,
+                                                                        "6.644444444444444"
+                                                                    ]
+                                                      }
+                                                  ]
+                                   },
+                       "storageOps":  {
+                                          "query":  "sum by (operation,outcome,node_id) (rate(minidrive_storage_node_operation_seconds_count[1m]))",
+                                          "available":  true,
+                                          "result":  [
+                                                         {
+                                                             "metric":  {
+                                                                            "node_id":  "primary",
+                                                                            "operation":  "delete",
+                                                                            "outcome":  "success"
+                                                                        },
+                                                             "value":  [
+                                                                           1792668866.659,
+                                                                           "6.644444444444444"
+                                                                       ]
+                                                         },
+                                                         {
+                                                             "metric":  {
+                                                                            "node_id":  "primary",
+                                                                            "operation":  "download",
+                                                                            "outcome":  "success"
+                                                                        },
+                                                             "value":  [
+                                                                           1792668866.659,
+                                                                           "6.644444444444444"
+                                                                       ]
+                                                         },
+                                                         {
+                                                             "metric":  {
+                                                                            "node_id":  "primary",
+                                                                            "operation":  "upload",
+                                                                            "outcome":  "success"
+                                                                        },
+                                                             "value":  [
+                                                                           1792668866.659,
+                                                                           "6.666666666666666"
+                                                                       ]
+                                                         }
+                                                     ]
+                                      },
+                       "storageBytes":  {
+                                            "query":  "sum by (operation,node_id) (rate(minidrive_storage_node_bytes_total[1m]))",
+                                            "available":  true,
+                                            "result":  [
+                                                           {
+                                                               "metric":  {
+                                                                              "node_id":  "primary",
+                                                                              "operation":  "download"
+                                                                          },
+                                                               "value":  [
+                                                                             1792668866.660,
+                                                                             "435450.3111111111"
+                                                                         ]
+                                                           },
+                                                           {
+                                                               "metric":  {
+                                                                              "node_id":  "primary",
+                                                                              "operation":  "upload"
+                                                                          },
+                                                               "value":  [
+                                                                             1792668866.660,
+                                                                             "436906.6666666666"
+                                                                         ]
+                                                           }
+                                                       ]
+                                        },
+                       "sessions":  {
+                                        "query":  "sum by (operation,outcome) (rate(minidrive_upload_session_operation_seconds_count[1m]))",
+                                        "available":  false,
+                                        "result":  [
+
+                                                   ]
+                                    },
+                       "sessionEvents":  {
+                                             "query":  "sum by (event,outcome) (rate(minidrive_upload_session_events_total[1m]))",
+                                             "available":  false,
+                                             "result":  [
+
+                                                        ]
+                                         }
+                   },
+    "host":  {
+                 "freeMemoryMiB":  2295,
+                 "totalMemoryMiB":  16088,
+                 "memoryPercentFree":  14.3,
+                 "cpuPercent":  28.8
+             },
+    "backendHealth":  "UP",
+    "dependencies":  [
+                         "/minidrive-postgres healthy",
+                         "/minidrive-redis healthy",
+                         "/minidrive-minio healthy",
+                         "/minidrive-minio-secondary healthy"
+                     ]
+}

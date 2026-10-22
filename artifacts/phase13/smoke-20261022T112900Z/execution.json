@@ -1,0 +1,9 @@
+﻿{
+    "runId":  "smoke-20261022T112900Z",
+    "classification":  "inconclusive wrapper attempt",
+    "k6IterationCompleted":  true,
+    "processExitCode":  "unavailable",
+    "reason":  "Start-Process wrapper returned a null ExitCode; a later direct-process run captured a reliable exit code",
+    "summaryAvailable":  true,
+    "rawOutputs":  "C:\\Users\\hteju\\AppData\\Local\\Temp\\minidrive-phase13\\smoke-20261022T112900Z"
+}

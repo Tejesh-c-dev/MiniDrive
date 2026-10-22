@@ -1,0 +1,31 @@
+﻿{
+    "gitCommit":  "2582085b3d638115ab3366c029a59f6b4dd110f3",
+    "branch":  "main",
+    "k6Version":  "k6.exe v2.2.0 (commit/00a9a1b7f5, go1.26.5, windows/amd64)",
+    "baseUrl":  "http://127.0.0.1:8080",
+    "backendHealth":  "UP",
+    "backendActuatorPrometheusHttp":  200,
+    "prometheusReadyHttp":  200,
+    "prometheusUp":  "1",
+    "dependencies":  [
+                         "/minidrive-postgres healthy",
+                         "/minidrive-redis healthy",
+                         "/minidrive-minio healthy",
+                         "/minidrive-minio-secondary healthy"
+                     ],
+    "primaryStorageHealthHttp":  200,
+    "accountEmail":  "k6-test@localhost.test",
+    "authenticationHttp":  200,
+    "authMeHttp":  200,
+    "fileListHttp":  200,
+    "initialAccountFileCount":  1,
+    "storageConfiguration":  {
+                                 "primaryEnabled":  true,
+                                 "secondaryEnabled":  false,
+                                 "replicationEnabled":  false,
+                                 "basis":  "application.yml defaults; root .env contains no storage or replication overrides"
+                             },
+    "secretValuesRecorded":  false,
+    "preflightValidatedAtUtc":  "2026-10-22T11:28:41.7718483Z",
+    "finalPostRunRecheckAtUtc":  "2026-10-22T11:40:49.0659518Z"
+}

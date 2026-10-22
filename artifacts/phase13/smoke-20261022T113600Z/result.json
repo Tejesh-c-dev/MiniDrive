@@ -1,0 +1,83 @@
+﻿{
+    "runId":  "smoke-20261022T113600Z",
+    "exitCode":  0,
+    "scenario":  "smoke",
+    "actualVUs":  1,
+    "iterations":  1,
+    "httpRequests":  8,
+    "requestsPerSecond":  19.380272191077854,
+    "httpFailureRate":  0,
+    "passedChecks":  10,
+    "failedChecks":  0,
+    "httpLatencyMs":  {
+                          "p50":  29.0621,
+                          "p95":  97.56981999999998,
+                          "p99":  108.211164
+                      },
+    "uploadLatencyMs":  {
+                            "p50":  72.8667,
+                            "p95":  72.8667,
+                            "p99":  72.8667
+                        },
+    "downloadLatencyMs":  {
+                              "p50":  20.9097,
+                              "p95":  20.9097,
+                              "p99":  20.9097
+                          },
+    "statusDistribution":  [
+                               {
+                                   "status":  "200",
+                                   "count":  6
+                               },
+                               {
+                                   "status":  "201",
+                                   "count":  1
+                               },
+                               {
+                                   "status":  "204",
+                                   "count":  1
+                               }
+                           ],
+    "thresholds":  {
+                       "http_req_failed":  true,
+                       "checks":  true
+                   },
+    "fixtureCreated":  1,
+    "fixtureDeleted204":  1,
+    "fixtureUnresolved":  0,
+    "cleanupRecords":  "cleanup.json",
+    "summaryDurationMs":  412.7909,
+    "monitoringAndHost":  {
+                              "prometheusCaptureCount":  3,
+                              "hostFreeMemoryMiB":  {
+                                                        "minimum":  2947,
+                                                        "maximum":  3019
+                                                    },
+                              "hostCpuPercent":  {
+                                                     "minimum":  11.9,
+                                                     "maximum":  40
+                                                 },
+                              "backendProcessCpuRatio":  {
+                                                             "maximum":  0.0008
+                                                         },
+                              "jvmHeapUsedBytes":  {
+                                                       "maximum":  52428800
+                                                   },
+                              "prometheusSeriesAvailableCaptureCount":  {
+                                                                            "up":  3,
+                                                                            "heap":  3,
+                                                                            "cpu":  3,
+                                                                            "httpRate":  3,
+                                                                            "fileOps":  3,
+                                                                            "storageOps":  3,
+                                                                            "storageBytes":  3,
+                                                                            "sessions":  0,
+                                                                            "sessionEvents":  0
+                                                                        },
+                              "postgresCpuMemory":  "unavailable: no exporter series",
+                              "redisCpuMemory":  "unavailable: no exporter series",
+                              "storageNodeCpuMemory":  "unavailable: no exporter series; configured primary operations visible"
+                          },
+    "k6DurationMs":  412.7909,
+    "k6DurationSeconds":  0.413
+}

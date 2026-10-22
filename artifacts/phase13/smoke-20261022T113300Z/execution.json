@@ -1,0 +1,10 @@
+﻿{
+    "runId":  "smoke-20261022T113300Z",
+    "classification":  "inconclusive wrapper attempt",
+    "processExitCode":  "unavailable",
+    "reason":  "Direct invocation hit PowerShell native-stderr handling before exit capture; later summary completed, but fixture console ID was not retained",
+    "summaryAvailable":  true,
+    "rawOutputs":  "C:\\Users\\hteju\\AppData\\Local\\Temp\\minidrive-phase13\\smoke-20261022T113300Z",
+    "cleanupEvidence":  "summary file_delete status check passed; subsequent inventory showed no extra fixture from this run, but exact ID was not retained",
+    "countedAsSuccessfulWorkload":  false
+}

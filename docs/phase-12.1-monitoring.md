@@ -1,9 +1,11 @@
 # Phase 12.1 and 12.2 monitoring
 
-MiniDrive exposes only `/actuator/health` and `/actuator/prometheus`, and its
-security rules allow those endpoints only to loopback clients. Actuator shares
-the backend's application port 8080; there is no separate management listener
-on port 8081. The API continues to provide `/api/health`.
+MiniDrive exposes `/actuator/health`, its `/actuator/health/database` and
+`/actuator/health/cache` dependency groups, and `/actuator/prometheus`. All of
+these management routes are allowed only to loopback clients. Health component
+statuses are available without health details. Actuator shares the backend's
+application port 8080; there is no separate management listener on port 8081.
+The API continues to provide `/api/health`.
 
 ## Run Prometheus on Windows
 

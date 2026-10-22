@@ -1,0 +1,308 @@
+{
+  "metrics": {
+    "http_req_blocked": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(90)": 1.3409699999999998,
+        "p(95)": 1.5453349999999997,
+        "p(99)": 1.7088269999999999,
+        "max": 1.7497,
+        "avg": 0.36443749999999997,
+        "med": 0
+      }
+    },
+    "minidrive_upload_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "med": 72.8667,
+        "p(90)": 72.8667,
+        "p(95)": 72.8667,
+        "p(99)": 72.8667,
+        "max": 72.8667,
+        "avg": 72.8667
+      }
+    },
+    "http_req_tls_handshaking": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(95)": 0,
+        "p(99)": 0,
+        "max": 0,
+        "avg": 0,
+        "med": 0,
+        "p(90)": 0
+      }
+    },
+    "minidrive_response_status_total": {
+      "contains": "default",
+      "values": {
+        "count": 8,
+        "rate": 19.380272191077854
+      },
+      "type": "counter"
+    },
+    "iteration_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "med": 233.2957,
+        "p(90)": 233.2957,
+        "p(95)": 233.2957,
+        "p(99)": 233.2957,
+        "max": 233.2957,
+        "avg": 233.2957
+      }
+    },
+    "minidrive_download_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 20.9097,
+        "med": 20.9097,
+        "p(90)": 20.9097,
+        "p(95)": 20.9097,
+        "p(99)": 20.9097,
+        "max": 20.9097
+      }
+    },
+    "http_req_sending": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "med": 0,
+        "p(90)": 0.1780499999999999,
+        "p(95)": 0.3857749999999997,
+        "p(99)": 0.5519549999999999,
+        "max": 0.5935,
+        "avg": 0.0741875
+      }
+    },
+    "http_req_receiving": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(95)": 1.602545,
+        "p(99)": 1.621389,
+        "max": 1.6261,
+        "avg": 0.5446875,
+        "med": 0.28715,
+        "p(90)": 1.57899
+      }
+    },
+    "http_req_failed": {
+      "values": {
+        "rate": 0,
+        "passes": 0,
+        "fails": 8
+      },
+      "thresholds": {
+        "rate<0.05": {
+          "ok": true
+        }
+      },
+      "type": "rate",
+      "contains": "default"
+    },
+    "http_req_duration{expected_response:true}": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 42.0961125,
+        "med": 29.0621,
+        "p(90)": 84.26813999999999,
+        "p(95)": 97.56981999999998,
+        "p(99)": 108.211164,
+        "max": 110.8715
+      }
+    },
+    "http_req_connecting": {
+      "contains": "time",
+      "values": {
+        "avg": 0.2971375,
+        "med": 0,
+        "p(90)": 0.9640899999999998,
+        "p(95)": 1.3568949999999993,
+        "p(99)": 1.6711389999999997,
+        "max": 1.7497
+      },
+      "type": "trend"
+    },
+    "data_sent": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 67933,
+        "rate": 164570.0038445615
+      }
+    },
+    "http_reqs": {
+      "values": {
+        "count": 8,
+        "rate": 19.380272191077854
+      },
+      "type": "counter",
+      "contains": "default"
+    },
+    "data_received": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 129207,
+        "rate": 313008.35362407455
+      }
+    },
+    "http_req_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 42.0961125,
+        "med": 29.0621,
+        "p(90)": 84.26813999999999,
+        "p(95)": 97.56981999999998,
+        "p(99)": 108.211164,
+        "max": 110.8715
+      }
+    },
+    "checks": {
+      "values": {
+        "rate": 1,
+        "passes": 10,
+        "fails": 0
+      },
+      "thresholds": {
+        "rate>0.95": {
+          "ok": true
+        }
+      },
+      "type": "rate",
+      "contains": "default"
+    },
+    "http_req_waiting": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(90)": 82.76153,
+        "p(95)": 96.81651499999998,
+        "p(99)": 108.06050299999998,
+        "max": 110.8715,
+        "avg": 41.477237499999994,
+        "med": 28.24905
+      }
+    },
+    "iterations": {
+      "contains": "default",
+      "values": {
+        "count": 1,
+        "rate": 2.4225340238847317
+      },
+      "type": "counter"
+    }
+  },
+  "root_group": {
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": [
+      {
+        "name": "setup",
+        "path": "::setup",
+        "id": "5c0f8025f7e0b6654089e5b00e950f1a",
+        "groups": [],
+        "checks": [
+            {
+              "id": "73755ff49d98bf84d897f9db35aae5f2",
+              "passes": 1,
+              "fails": 0,
+              "name": "backend health is UP",
+              "path": "::setup::backend health is UP"
+            },
+            {
+              "path": "::setup::Prometheus endpoint is available",
+              "id": "75c32081b9e131bcfcc9849118ac7e70",
+              "passes": 1,
+              "fails": 0,
+              "name": "Prometheus endpoint is available"
+            },
+            {
+              "passes": 1,
+              "fails": 0,
+              "name": "login succeeds and returns a bearer token",
+              "path": "::setup::login succeeds and returns a bearer token",
+              "id": "87b1d5e3ff9f83960d223e7083703b0d"
+            }
+          ]
+      }
+    ],
+    "checks": [
+      {
+        "id": "1a3653ec9153eba6d3127b26f55b8c0d",
+        "passes": 1,
+        "fails": 0,
+        "name": "auth_me status is 200",
+        "path": "::auth_me status is 200"
+      },
+      {
+        "path": "::file_list status is 200",
+        "id": "13b4ba63f0926e1a727a35ca5b40770a",
+        "passes": 1,
+        "fails": 0,
+        "name": "file_list status is 200"
+      },
+      {
+        "name": "file_upload status is 201",
+        "path": "::file_upload status is 201",
+        "id": "de31092b319dc2955f416659c438f685",
+        "passes": 1,
+        "fails": 0
+      },
+      {
+        "name": "upload response has a file id, unique name, and requested size",
+        "path": "::upload response has a file id, unique name, and requested size",
+        "id": "352847cc6d200ce79fa5231afbe719e7",
+        "passes": 1,
+        "fails": 0
+      },
+      {
+        "path": "::file_download status is 200",
+        "id": "9a96fac124c3d1eaa66322928be185a9",
+        "passes": 1,
+        "fails": 0,
+        "name": "file_download status is 200"
+      },
+      {
+        "passes": 1,
+        "fails": 0,
+        "name": "download bytes match uploaded fixture",
+        "path": "::download bytes match uploaded fixture",
+        "id": "0ad46dae03450c4a389158e60c9f7c00"
+      },
+      {
+        "id": "c631b90ac2134d608ccde44c0e8aa169",
+        "passes": 1,
+        "fails": 0,
+        "name": "file_delete status is 204",
+        "path": "::file_delete status is 204"
+      }
+    ]
+  },
+  "options": {
+    "summaryTimeUnit": "",
+    "noColor": true,
+    "summaryTrendStats": [
+      "avg",
+      "med",
+      "p(90)",
+      "p(95)",
+      "p(99)",
+      "max"
+    ]
+  },
+  "state": {
+    "isStdOutTTY": false,
+    "isStdErrTTY": false,
+    "testRunDurationMs": 412.7909
+  }
+}

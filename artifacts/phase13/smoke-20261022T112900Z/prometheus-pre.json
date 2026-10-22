@@ -1,0 +1,191 @@
+﻿{
+    "label":  "pre",
+    "timestampUtc":  "2026-10-22T11:28:57.6499433Z",
+    "prometheus":  {
+                       "up":  {
+                                  "query":  "up{job=\"minidrive\"}",
+                                  "available":  true,
+                                  "result":  [
+                                                 {
+                                                     "metric":  {
+                                                                    "__name__":  "up",
+                                                                    "instance":  "127.0.0.1:8080",
+                                                                    "job":  "minidrive"
+                                                                },
+                                                     "value":  [
+                                                                   1792668537.701,
+                                                                   "1"
+                                                               ]
+                                                 }
+                                             ]
+                              },
+                       "heap":  {
+                                    "query":  "jvm_memory_used_bytes{area=\"heap\",job=\"minidrive\"}",
+                                    "available":  true,
+                                    "result":  [
+                                                   {
+                                                       "metric":  {
+                                                                      "__name__":  "jvm_memory_used_bytes",
+                                                                      "application":  "minidrive",
+                                                                      "area":  "heap",
+                                                                      "id":  "G1 Eden Space",
+                                                                      "instance":  "127.0.0.1:8080",
+                                                                      "job":  "minidrive"
+                                                                  },
+                                                       "value":  [
+                                                                     1792668537.714,
+                                                                     "23068672"
+                                                                 ]
+                                                   },
+                                                   {
+                                                       "metric":  {
+                                                                      "__name__":  "jvm_memory_used_bytes",
+                                                                      "application":  "minidrive",
+                                                                      "area":  "heap",
+                                                                      "id":  "G1 Old Gen",
+                                                                      "instance":  "127.0.0.1:8080",
+                                                                      "job":  "minidrive"
+                                                                  },
+                                                       "value":  [
+                                                                     1792668537.714,
+                                                                     "51388256"
+                                                                 ]
+                                                   },
+                                                   {
+                                                       "metric":  {
+                                                                      "__name__":  "jvm_memory_used_bytes",
+                                                                      "application":  "minidrive",
+                                                                      "area":  "heap",
+                                                                      "id":  "G1 Survivor Space",
+                                                                      "instance":  "127.0.0.1:8080",
+                                                                      "job":  "minidrive"
+                                                                  },
+                                                       "value":  [
+                                                                     1792668537.714,
+                                                                     "9478080"
+                                                                 ]
+                                                   }
+                                               ]
+                                },
+                       "cpu":  {
+                                   "query":  "process_cpu_usage{job=\"minidrive\"}",
+                                   "available":  true,
+                                   "result":  [
+                                                  {
+                                                      "metric":  {
+                                                                     "__name__":  "process_cpu_usage",
+                                                                     "application":  "minidrive",
+                                                                     "instance":  "127.0.0.1:8080",
+                                                                     "job":  "minidrive"
+                                                                 },
+                                                      "value":  [
+                                                                    1792668537.715,
+                                                                    "0.0013884815824449508"
+                                                                ]
+                                                  }
+                                              ]
+                               },
+                       "httpRate":  {
+                                        "query":  "sum by (method,uri,status) (rate(http_server_requests_seconds_count{job=\"minidrive\"}[1m]))",
+                                        "available":  true,
+                                        "result":  [
+                                                       {
+                                                           "metric":  {
+                                                                          "method":  "GET",
+                                                                          "status":  "200",
+                                                                          "uri":  "/actuator/prometheus"
+                                                                      },
+                                                           "value":  [
+                                                                         1792668537.718,
+                                                                         "0.06666666666666665"
+                                                                     ]
+                                                       },
+                                                       {
+                                                           "metric":  {
+                                                                          "method":  "GET",
+                                                                          "status":  "200",
+                                                                          "uri":  "/actuator/health"
+                                                                      },
+                                                           "value":  [
+                                                                         1792668537.718,
+                                                                         "0.04444444444444444"
+                                                                     ]
+                                                       },
+                                                       {
+                                                           "metric":  {
+                                                                          "method":  "GET",
+                                                                          "status":  "200",
+                                                                          "uri":  "/api/auth/me"
+                                                                      },
+                                                           "value":  [
+                                                                         1792668537.718,
+                                                                         "0"
+                                                                     ]
+                                                       },
+                                                       {
+                                                           "metric":  {
+                                                                          "method":  "GET",
+                                                                          "status":  "200",
+                                                                          "uri":  "/api/files"
+                                                                      },
+                                                           "value":  [
+                                                                         1792668537.718,
+                                                                         "0.02222222222222222"
+                                                                     ]
+                                                       },
+                                                       {
+                                                           "metric":  {
+                                                                          "method":  "POST",
+                                                                          "status":  "200",
+                                                                          "uri":  "/api/auth/login"
+                                                                      },
+                                                           "value":  [
+                                                                         1792668537.718,
+                                                                         "0.04444444444444444"
+                                                                     ]
+                                                       }
+                                                   ]
+                                    },
+                       "fileOps":  {
+                                       "query":  "sum by (operation,outcome) (rate(minidrive_file_operation_seconds_count[1m]))",
+                                       "available":  false,
+                                       "result":  [
+
+                                                  ]
+                                   },
+                       "storageOps":  {
+                                          "query":  "sum by (operation,outcome,node_id) (rate(minidrive_storage_node_operation_seconds_count[1m]))",
+                                          "available":  false,
+                                          "result":  [
+
+                                                     ]
+                                      },
+                       "storageBytes":  {
+                                            "query":  "sum by (operation,node_id) (rate(minidrive_storage_node_bytes_total[1m]))",
+                                            "available":  false,
+                                            "result":  [
+
+                                                       ]
+                                        },
+                       "sessions":  {
+                                        "query":  "sum by (operation,outcome) (rate(minidrive_upload_session_operation_seconds_count[1m]))",
+                                        "available":  false,
+                                        "result":  [
+
+                                                   ]
+                                    },
+                       "sessionEvents":  {
+                                             "query":  "sum by (event,outcome) (rate(minidrive_upload_session_events_total[1m]))",
+                                             "available":  false,
+                                             "result":  [
+
+                                                        ]
+                                         }
+                   },
+    "host":  {
+                 "freeMemoryMiB":  2911,
+                 "totalMemoryMiB":  16088,
+                 "memoryPercentFree":  18.1,
+                 "cpuPercent":  24.7
+             }
+}

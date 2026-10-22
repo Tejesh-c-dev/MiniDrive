@@ -23,6 +23,7 @@ import java.util.HexFormat;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Routes objects to the authoritative node and, when enabled, maintains
@@ -37,6 +38,7 @@ public class RoutingStorageService implements StorageService {
     private final boolean replicationEnabled;
     private final String primaryNodeId;
     private final Set<String> repairs = ConcurrentHashMap.newKeySet();
+    private final Map<String, AtomicInteger> nodeHealth = new ConcurrentHashMap<>();
 
     @Autowired
     public RoutingStorageService(
@@ -52,6 +54,12 @@ public class RoutingStorageService implements StorageService {
         this.metrics = metrics;
         this.replicationEnabled = replicationEnabled;
         this.primaryNodeId = primaryNodeId;
+        nodes.keySet().forEach(nodeId -> {
+            AtomicInteger status = new AtomicInteger(-1);
+            nodeHealth.put(nodeId, status);
+            metrics.gauge("minidrive_storage_node_health",
+                    io.micrometer.core.instrument.Tags.of("node_id", nodeId), status);
+        });
         if (replicationEnabled && !nodes.containsKey(primaryNodeId)) {
             throw new IllegalStateException("Configured replication primary is not enabled: " + primaryNodeId);
         }
@@ -191,6 +199,12 @@ public class RoutingStorageService implements StorageService {
 
     @Scheduled(fixedDelayString = "${minidrive.storage.replication.repair-delay-ms:30000}")
     public void scheduledRepair() { repairOnce(); }
+
+    /** Refreshes bounded per-node availability gauges without exposing object data. */
+    @Scheduled(fixedDelayString = "${minidrive.storage.health-check-delay-ms:15000}")
+    public void probeStorageNodes() {
+        nodes.forEach((nodeId, node) -> nodeHealth.get(nodeId).set(node.isHealthy() ? 1 : 0));
+    }
 
     private boolean heal(String key, String target) {
         ReplicaExpectation expected = expectation(key);

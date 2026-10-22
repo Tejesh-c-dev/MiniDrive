@@ -1,0 +1,12 @@
+﻿{
+    "records":  [
+                    "time=\"2026-10-22T16:59:00+05:30\" level=info msg=\"[fixture] attempted name=k6-1792668540123-1-0-0caf41ca88d121.bin\" source=console",
+                    "time=\"2026-10-22T16:59:00+05:30\" level=info msg=\"[fixture] created id=7fdd016f-c22f-4b67-888a-1dc78cfc58a0 name=k6-1792668540123-1-0-0caf41ca88d121.bin\" source=console",
+                    "time=\"2026-10-22T16:59:00+05:30\" level=info msg=\"[fixture] cleanup id=7fdd016f-c22f-4b67-888a-1dc78cfc58a0 status=204\" source=console"
+                ],
+    "fixtureCreated":  1,
+    "deleteCheckPasses":  1,
+    "deleteCheckFails":  0,
+    "exactIdDeleteStatus":  204,
+    "unresolved":  0
+}

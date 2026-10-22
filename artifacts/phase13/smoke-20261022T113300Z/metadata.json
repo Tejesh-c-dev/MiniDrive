@@ -1,0 +1,18 @@
+﻿{
+    "runId":  "smoke-20261022T113300Z",
+    "timestampUtc":  "2026-10-22T11:30:01.1662349Z",
+    "commit":  "2582085b3d638115ab3366c029a59f6b4dd110f3",
+    "branch":  "main",
+    "k6Version":  "k6.exe v2.2.0 (commit/00a9a1b7f5, go1.26.5, windows/amd64)",
+    "scenario":  "smoke",
+    "baseUrl":  "http://127.0.0.1:8080",
+    "configuredVUs":  1,
+    "configuredIterations":  1,
+    "fileSizeBytes":  65536,
+    "thresholds":  "http_req_failed rate\u003c0.05; checks rate\u003e0.95",
+    "primaryStorageEnabled":  true,
+    "secondaryStorageEnabled":  false,
+    "replicationEnabled":  false,
+    "rawOutputs":  "C:\\Users\\hteju\\AppData\\Local\\Temp\\minidrive-phase13\\smoke-20261022T113300Z",
+    "preflightStatus":  "passed"
+}

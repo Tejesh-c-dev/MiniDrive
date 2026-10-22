@@ -1,0 +1,7 @@
+﻿{
+    "attemptedFixtureName":  "k6-1792668571556-1-0-abdfef070c636.bin",
+    "createdFileId":  "13d52c95-74da-4b31-899d-5afdfaeca96c",
+    "cleanup":  "manual exact-ID DELETE HTTP 204",
+    "remaining":  false,
+    "record":  "../reconciliation-smoke-20261022T113100Z.json"
+}

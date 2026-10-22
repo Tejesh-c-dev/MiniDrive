@@ -1,0 +1,8 @@
+﻿{
+    "records":  [
+                    "time=\"2026-10-22T17:00:32+05:30\" level=info msg=\"[fixture] attempted name=k6-1792668632297-1-0-3cc718d3fe4974.bin\" source=console",
+                    "time=\"2026-10-22T17:00:32+05:30\" level=info msg=\"[fixture] created id=7663f4bc-3564-4b82-8f48-93a5daf2214f name=k6-1792668632297-1-0-3cc718d3fe4974.bin\" source=console",
+                    "time=\"2026-10-22T17:00:32+05:30\" level=info msg=\"[fixture] cleanup id=7663f4bc-3564-4b82-8f48-93a5daf2214f status=204\" source=console"
+                ],
+    "exactIdCleanupObserved":  true
+}

@@ -1,0 +1,106 @@
+﻿{
+    "runId":  "baseline-20261022T114000Z",
+    "exitCode":  0,
+    "httpRequests":  4008,
+    "requestsPerSecond":  66.51336497700034,
+    "iterations":  801,
+    "httpFailureRate":  0,
+    "failedChecks":  0,
+    "passedChecks":  5610,
+    "httpLatencyMs":  {
+                          "p50":  14.6844,
+                          "p95":  38.61653999999999,
+                          "p99":  46.6933
+                      },
+    "uploadLatencyMs":  {
+                            "p50":  34.5986,
+                            "p95":  46.5295,
+                            "p99":  62.5374
+                        },
+    "downloadLatencyMs":  {
+                              "p50":  12.6287,
+                              "p95":  19.0864,
+                              "p99":  23.0491
+                          },
+    "statusDistribution":  [
+                               {
+                                   "status":  "200",
+                                   "count":  2406
+                               },
+                               {
+                                   "status":  "201",
+                                   "count":  801
+                               },
+                               {
+                                   "status":  "204",
+                                   "count":  801
+                               }
+                           ],
+    "actualVuValues":  [
+                           2
+                       ],
+    "maximumVUs":  2,
+    "vuSampleCount":  60,
+    "thresholds":  {
+                       "checks:rate\u003e0.95":  true,
+                       "http_req_failed:rate\u003c0.05":  true
+                   },
+    "fixtureCreated":  801,
+    "fixtureDeleted204":  801,
+    "fixtureUnresolved":  0,
+    "accountInventoryAfter":  {
+                                  "value":  [
+                                                {
+                                                    "id":  "28b2f2b8-071c-4287-be60-9a7b39c4f4d1",
+                                                    "name":  "testfile.bin",
+                                                    "sizeBytes":  1026
+                                                },
+                                                {
+                                                    "id":  "13d52c95-74da-4b31-899d-5afdfaeca96c",
+                                                    "name":  "k6-1792668571556-1-0-abdfef070c636.bin",
+                                                    "sizeBytes":  65536
+                                                }
+                                            ],
+                                  "Count":  2
+                              },
+    "dependencyHealth":  [
+                             "/minidrive-postgres healthy",
+                             "/minidrive-redis healthy",
+                             "/minidrive-minio healthy",
+                             "/minidrive-minio-secondary healthy"
+                         ],
+    "prometheusUp":  "1",
+    "monitoringAndHost":  {
+                              "prometheusCaptureCount":  6,
+                              "hostFreeMemoryMiB":  {
+                                                        "minimum":  2720,
+                                                        "maximum":  3274
+                                                    },
+                              "hostCpuPercent":  {
+                                                     "minimum":  23.5,
+                                                     "maximum":  64.9
+                                                 },
+                              "backendProcessCpuRatio":  {
+                                                             "maximum":  0.0797
+                                                         },
+                              "jvmHeapUsedBytes":  {
+                                                       "maximum":  60817408
+                                                   },
+                              "prometheusSeriesAvailableCaptureCount":  {
+                                                                            "up":  6,
+                                                                            "heap":  6,
+                                                                            "cpu":  6,
+                                                                            "httpRate":  6,
+                                                                            "fileOps":  6,
+                                                                            "storageOps":  6,
+                                                                            "storageBytes":  6,
+                                                                            "sessions":  0,
+                                                                            "sessionEvents":  0
+                                                                        },
+                              "postgresCpuMemory":  "unavailable: no exporter series",
+                              "redisCpuMemory":  "unavailable: no exporter series",
+                              "storageNodeCpuMemory":  "unavailable: no exporter series; configured primary operations visible"
+                          },
+    "k6DurationMs":  60258.5661,
+    "k6DurationSeconds":  60.259
+}

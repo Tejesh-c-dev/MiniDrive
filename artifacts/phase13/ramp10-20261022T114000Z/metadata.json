@@ -1,0 +1,43 @@
+﻿{
+    "runId":  "ramp10-20261022T114000Z",
+    "startedAtUtc":  "2026-10-22T11:36:44.2874718Z",
+    "commit":  "2582085b3d638115ab3366c029a59f6b4dd110f3",
+    "branch":  "main",
+    "k6Version":  "k6.exe v2.2.0 (commit/00a9a1b7f5, go1.26.5, windows/amd64)",
+    "scenario":  "ramp10",
+    "baseUrl":  "http://127.0.0.1:8080",
+    "startVUs":  1,
+    "stages":  [
+                   {
+                       "duration":  "20s",
+                       "target":  2
+                   },
+                   {
+                       "duration":  "20s",
+                       "target":  4
+                   },
+                   {
+                       "duration":  "20s",
+                       "target":  6
+                   },
+                   {
+                       "duration":  "20s",
+                       "target":  8
+                   },
+                   {
+                       "duration":  "20s",
+                       "target":  10
+                   }
+               ],
+    "plateau":  {
+                    "duration":  "60s",
+                    "target":  10
+                },
+    "fileSizeBytes":  65536,
+    "thresholds":  "http_req_failed rate\u003c0.05; checks rate\u003e0.95",
+    "primaryStorageEnabled":  true,
+    "secondaryStorageEnabled":  false,
+    "replicationEnabled":  false,
+    "resourceGuard":  "stop if host free memory below 1024 MiB or health regresses",
+    "rawOutputs":  "C:\\Users\\hteju\\AppData\\Local\\Temp\\minidrive-phase13\\ramp10-20261022T114000Z"
+}

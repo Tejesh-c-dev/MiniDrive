@@ -23,6 +23,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {
                 "management.health.redis.enabled=false",
+                "management.endpoint.health.validate-group-membership=false",
+                "management.endpoint.health.show-components=always",
+                "management.endpoint.health.group.database.include=db",
                 "management.endpoints.web.exposure.include=health,prometheus"
         })
 class ManagementEndpointIntegrationTest {
@@ -44,7 +47,14 @@ class ManagementEndpointIntegrationTest {
         HttpResponse<String> health = get(apiPort, "/actuator/health", null);
         assertEquals(200, health.statusCode());
         assertTrue(health.body().contains("\"status\":\"UP\""));
-        assertFalse(health.body().contains("components"));
+        assertTrue(health.body().contains("\"components\""));
+        assertTrue(health.body().contains("\"db\""));
+        assertFalse(health.body().contains("\"details\""));
+
+        HttpResponse<String> databaseHealth = get(apiPort, "/actuator/health/database", null);
+        assertEquals(200, databaseHealth.statusCode());
+        assertTrue(databaseHealth.body().contains("\"status\":\"UP\""));
+        assertFalse(databaseHealth.body().contains("\"details\""));
 
         HttpResponse<String> prometheus = get(apiPort, "/actuator/prometheus", null);
         assertEquals(200, prometheus.statusCode());

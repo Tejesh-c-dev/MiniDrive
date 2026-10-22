@@ -55,6 +55,9 @@ public class SecurityConfig {
         RequestMatcher localHealth = new AndRequestMatcher(
                 PathPatternRequestMatcher.pathPattern("/actuator/health"),
                 new IpAddressMatcher("127.0.0.1"));
+        RequestMatcher localHealthComponents = new AndRequestMatcher(
+                PathPatternRequestMatcher.pathPattern("/actuator/health/**"),
+                new IpAddressMatcher("127.0.0.1"));
         RequestMatcher localPrometheus = new AndRequestMatcher(
                 PathPatternRequestMatcher.pathPattern("/actuator/prometheus"),
                 new IpAddressMatcher("127.0.0.1"));
@@ -65,7 +68,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(
                         SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(localHealth, localPrometheus)
+                        .requestMatchers(localHealth, localHealthComponents, localPrometheus)
                         .permitAll()
                         .anyRequest()
                         .denyAll());

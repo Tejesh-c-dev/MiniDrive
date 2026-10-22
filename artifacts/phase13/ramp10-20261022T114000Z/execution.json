@@ -1,0 +1,9 @@
+﻿{
+    "runId":  "ramp10-20261022T114000Z",
+    "exitCode":  0,
+    "summaryExists":  true,
+    "rawMetricsPath":  "C:\\Users\\hteju\\AppData\\Local\\Temp\\minidrive-phase13\\ramp10-20261022T114000Z\\metrics.ndjson",
+    "duringCaptureCount":  9,
+    "stopReason":  null,
+    "completedAtUtc":  "2026-10-22T11:39:30.3085867Z"
+}

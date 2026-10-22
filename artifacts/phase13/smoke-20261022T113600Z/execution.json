@@ -1,0 +1,10 @@
+﻿{
+    "runId":  "smoke-20261022T113600Z",
+    "exitCode":  0,
+    "summaryExists":  true,
+    "rawMetricsPath":  "C:\\Users\\hteju\\AppData\\Local\\Temp\\minidrive-phase13\\smoke-20261022T113600Z\\metrics.ndjson",
+    "stdoutPath":  "C:\\Users\\hteju\\AppData\\Local\\Temp\\minidrive-phase13\\smoke-20261022T113600Z\\stdout.log",
+    "stderrPath":  "C:\\Users\\hteju\\AppData\\Local\\Temp\\minidrive-phase13\\smoke-20261022T113600Z\\stderr.log",
+    "duringCapture":  true,
+    "completedAtUtc":  "2026-10-22T11:30:35.1521341Z"
+}

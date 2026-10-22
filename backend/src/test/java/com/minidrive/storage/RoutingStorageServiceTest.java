@@ -11,6 +11,24 @@ import static org.mockito.Mockito.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class RoutingStorageServiceTest {
+    @Test void nodeHealthGaugeStartsUnknownAndTracksProbeResults() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        NodeStorageClient primary = mock(NodeStorageClient.class);
+        NodeStorageClient secondary = mock(NodeStorageClient.class);
+        when(primary.isHealthy()).thenReturn(true);
+        when(secondary.isHealthy()).thenReturn(false);
+        RoutingStorageService storage = new RoutingStorageService(mock(JdbcTemplate.class),
+                Map.of("primary", primary, "secondary", secondary), (key, ids) -> "primary", registry);
+
+        assertEquals(-1.0, registry.get("minidrive_storage_node_health").tag("node_id", "primary").gauge().value());
+        storage.probeStorageNodes();
+
+        assertEquals(1.0, registry.get("minidrive_storage_node_health").tag("node_id", "primary").gauge().value());
+        assertEquals(0.0, registry.get("minidrive_storage_node_health").tag("node_id", "secondary").gauge().value());
+        verify(primary).isHealthy();
+        verify(secondary).isHealthy();
+    }
+
     @Test void uploadRegistersSelectedNodeAndRepeatReusesIt() {
         SimpleMeterRegistry registry=new SimpleMeterRegistry();
         JdbcTemplate jdbc=mock(JdbcTemplate.class);

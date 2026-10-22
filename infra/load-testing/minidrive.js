@@ -127,6 +127,7 @@ export default function (data) {
   const filename = `${unique}.bin`;
   const payload = 'x'.repeat(bytes);
   let fileId;
+  console.log(`[fixture] attempted name=${filename}`);
   try {
     const form = { file: http.file(payload, filename, 'application/octet-stream') };
     const uploaded = http.post(`${BASE_URL}/api/files`, form, {
@@ -135,6 +136,7 @@ export default function (data) {
     responseStatuses.add(1, { status: String(uploaded.status), request: 'file_upload' });
     try { fileId = uploaded.json('id'); } catch (_) { /* No returned id means there is no owned resource to delete. */ }
     if (fileId) console.log(`[fixture] created id=${fileId} name=${filename}`);
+    else console.log(`[fixture] cleanup unresolved name=${filename}; upload response contained no file id`);
     uploadDuration.add(uploaded.timings.duration, { outcome: uploaded.status === 201 ? 'success' : 'failure' });
     if (!check(uploaded, { 'file_upload status is 201': (r) => r.status === 201 })) {
       fail(`file_upload returned HTTP ${uploaded.status}`);
@@ -147,12 +149,24 @@ export default function (data) {
     const downloaded = request('GET', `/api/files/${fileId}/download`, null, { headers, responseType: 'binary' }, 200, 'file_download');
     downloadDuration.add(downloaded.timings.duration, { outcome: 'success' });
     if (!check(downloaded, {
-      'download bytes match uploaded fixture': (r) => r.body && r.body.byteLength === bytes,
-    })) fail('Download response size did not match the uploaded fixture');
+      'download bytes match uploaded fixture': (r) => {
+        if (!r.body || r.body.byteLength !== bytes) return false;
+        const actual = new Uint8Array(r.body);
+        for (let i = 0; i < actual.length; i += 1) {
+          if (actual[i] !== payload.charCodeAt(i)) return false;
+        }
+        return true;
+      },
+    })) fail('Download response content or size did not match the uploaded fixture');
   } finally {
     if (fileId) {
-      const deleted = request('DELETE', `/api/files/${fileId}`, null, { headers }, 204, 'file_delete');
-      console.log(`[fixture] cleanup id=${fileId} status=${deleted.status}`);
+      try {
+        const deleted = request('DELETE', `/api/files/${fileId}`, null, { headers }, 204, 'file_delete');
+        console.log(`[fixture] cleanup id=${fileId} status=${deleted.status}`);
+      } catch (_) {
+        console.log(`[fixture] cleanup unresolved id=${fileId}; delete request failed`);
+        throw new Error(`Fixture cleanup failed for recorded id=${fileId}`);
+      }
     }
   }
 }

@@ -1,0 +1,9 @@
+﻿{
+    "runId":  "baseline-20261022T114000Z",
+    "exitCode":  0,
+    "summaryExists":  true,
+    "rawMetricsPath":  "C:\\Users\\hteju\\AppData\\Local\\Temp\\minidrive-phase13\\baseline-20261022T114000Z\\metrics.ndjson",
+    "duringCaptureCount":  4,
+    "completedAtUtc":  "2026-10-22T11:32:10.3280599Z",
+    "processCpuTimeMs":  65890.625
+}

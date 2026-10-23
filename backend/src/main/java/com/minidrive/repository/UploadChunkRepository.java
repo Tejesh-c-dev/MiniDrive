@@ -10,6 +10,8 @@ import java.util.UUID;
 
 public interface UploadChunkRepository extends JpaRepository<UploadChunk, UUID> {
 
+    boolean existsByStagingObjectKey(String stagingObjectKey);
+
     /**
      * Looks up one chunk within a session. Because {@code (session_id,
      * chunk_index)} is unique this returns at most one row, which is what makes

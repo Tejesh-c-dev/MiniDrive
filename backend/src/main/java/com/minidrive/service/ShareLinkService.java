@@ -7,12 +7,14 @@ import com.minidrive.dto.sharelink.SharedFileResponse;
 import com.minidrive.entity.File;
 import com.minidrive.entity.ShareLink;
 import com.minidrive.entity.User;
+import com.minidrive.exception.FolderDeletionInProgressException;
 import com.minidrive.exception.ForbiddenException;
 import com.minidrive.exception.ResourceNotFoundException;
 import com.minidrive.exception.StorageException;
 import com.minidrive.metrics.MeasuredOperation;
 import com.minidrive.mapper.ShareLinkMapper;
 import com.minidrive.repository.ShareLinkRepository;
+import com.minidrive.repository.FolderRepository;
 import com.minidrive.repository.UserRepository;
 import com.minidrive.security.ShareTokenService;
 import com.minidrive.storage.StorageService;
@@ -51,6 +53,7 @@ public class ShareLinkService {
             "This share link is invalid, expired, or has been revoked";
 
     private final ShareLinkRepository shareLinkRepository;
+    private final FolderRepository folderRepository;
     private final UserRepository userRepository;
     private final FileAccessService fileAccessService;
     private final StorageService storageService;
@@ -58,11 +61,13 @@ public class ShareLinkService {
 
     public ShareLinkService(
             ShareLinkRepository shareLinkRepository,
+            FolderRepository folderRepository,
             UserRepository userRepository,
             FileAccessService fileAccessService,
             StorageService storageService,
             ShareTokenService shareTokenService) {
         this.shareLinkRepository = shareLinkRepository;
+        this.folderRepository = folderRepository;
         this.userRepository = userRepository;
         this.fileAccessService = fileAccessService;
         this.storageService = storageService;
@@ -138,7 +143,9 @@ public class ShareLinkService {
     /** Returns safe, minimal metadata for a valid public token. */
     @Transactional(readOnly = true)
     public SharedFileResponse getSharedFile(String token) {
-        return ShareLinkMapper.toSharedFileResponse(resolveActiveLink(token).getFile());
+        File file = resolveActiveLink(token).getFile();
+        assertFolderAvailable(file);
+        return ShareLinkMapper.toSharedFileResponse(file);
     }
 
     /**
@@ -149,6 +156,7 @@ public class ShareLinkService {
     @MeasuredOperation(value = "download", metric = "minidrive_file_operation_seconds")
     public SharedFileDownload download(String token) {
         File file = resolveActiveLink(token).getFile();
+        assertFolderAvailable(file);
 
         try {
             return new SharedFileDownload(
@@ -161,6 +169,11 @@ public class ShareLinkService {
             log.error("Unable to download stored object for a shared file", e);
             throw e;
         }
+    }
+
+    private void assertFolderAvailable(File file) {
+        if (file.getFolder() != null && folderRepository.hasDeletingAncestor(file.getFolder().getId()))
+            throw new FolderDeletionInProgressException();
     }
 
     /**

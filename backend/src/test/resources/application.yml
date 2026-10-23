@@ -16,6 +16,12 @@ jwt:
   secret: test-secret-key-that-is-long-enough-for-hmac-sha
   expiration: 86400000
 
+minidrive:
+  cleanup-journal:
+    directory: target/test-cleanup-journal
+    retry-delay-ms: 3600000
+    initial-delay-ms: 3600000
+
 management:
   metrics:
     tags:

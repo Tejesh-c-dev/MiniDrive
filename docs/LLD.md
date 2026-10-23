@@ -1090,6 +1090,13 @@ File metadata reads, downloads, version listing, and historical-version download
 role with access. The permission service and `ShareLinkService` independently require
 `isOwner()` for permission/link management; a collaborator cannot delegate their access.
 
+`PATCH /api/files/{id}` accepts only logical metadata (`name` and an optional owned `folderId`).
+Supplying `contentType`, `sizeBytes`, or `checksum` rejects the whole request with `400`, including
+when combined with a rename or move. The service enforces this before mutating the entity, so direct
+service callers cannot bypass the rule. Those values are set by verified initial upload, content
+replacement, resumable completion, or version restoration. Name changes remain available to owners
+and editors; folder movement remains owner-only.
+
 The file service uses different not-found/forbidden choices by operation: for example,
 `FileService.get` reports an existing inaccessible file as forbidden, while download and delete
 use not-found for an inaccessible file. `PermissionService.requireOwnedFile` and

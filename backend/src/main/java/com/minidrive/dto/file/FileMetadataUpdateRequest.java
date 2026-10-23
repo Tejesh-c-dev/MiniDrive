@@ -1,14 +1,16 @@
 package com.minidrive.dto.file;
 
-import jakarta.validation.constraints.PositiveOrZero;
+import com.fasterxml.jackson.annotation.JsonAnySetter;
 import jakarta.validation.constraints.Size;
 
 import java.util.UUID;
 
 /**
- * Partial update of file metadata. Fields left null are not changed.
+ * Partial update of user-editable file metadata. Fields left null are not changed.
  * A null folderId keeps the current folder; moving to root is not
  * expressed through null (Phase 4 upload flow may add explicit support).
+ * Content-derived properties are tracked during JSON binding only so the
+ * service can reject legacy requests atomically; they are never stored.
  */
 public class FileMetadataUpdateRequest {
 
@@ -17,14 +19,7 @@ public class FileMetadataUpdateRequest {
 
     private UUID folderId;
 
-    @Size(max = 255, message = "Content type must be at most 255 characters")
-    private String contentType;
-
-    @PositiveOrZero(message = "Size in bytes cannot be negative")
-    private Long sizeBytes;
-
-    @Size(max = 128, message = "Checksum must be at most 128 characters")
-    private String checksum;
+    private boolean contentMetadataUpdateRequested;
 
     public FileMetadataUpdateRequest() {
     }
@@ -45,27 +40,16 @@ public class FileMetadataUpdateRequest {
         this.folderId = folderId;
     }
 
-    public String getContentType() {
-        return contentType;
+    @JsonAnySetter
+    public void recordUnsupportedProperty(String propertyName, Object value) {
+        if ("contentType".equals(propertyName)
+                || "sizeBytes".equals(propertyName)
+                || "checksum".equals(propertyName)) {
+            contentMetadataUpdateRequested = true;
+        }
     }
 
-    public void setContentType(String contentType) {
-        this.contentType = contentType;
-    }
-
-    public Long getSizeBytes() {
-        return sizeBytes;
-    }
-
-    public void setSizeBytes(Long sizeBytes) {
-        this.sizeBytes = sizeBytes;
-    }
-
-    public String getChecksum() {
-        return checksum;
-    }
-
-    public void setChecksum(String checksum) {
-        this.checksum = checksum;
+    public boolean hasContentMetadataUpdateRequested() {
+        return contentMetadataUpdateRequested;
     }
 }

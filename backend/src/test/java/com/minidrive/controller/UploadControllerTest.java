@@ -33,6 +33,8 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -77,6 +79,7 @@ class UploadControllerTest {
     @Autowired private MeterRegistry meterRegistry;
     @MockitoSpyBean private UploadChunkRepository uploadChunkRepository;
     @MockitoBean private StorageService storageService;
+    private final Map<String, byte[]> storedObjects = new ConcurrentHashMap<>();
 
     @BeforeEach
     void cleanup() {
@@ -85,6 +88,22 @@ class UploadControllerTest {
         fileRepository.deleteAll();
         folderRepository.deleteAll();
         userRepository.deleteAll();
+        storedObjects.clear();
+        org.mockito.Mockito.doAnswer(invocation -> {
+            String key = invocation.getArgument(0);
+            InputStream input = invocation.getArgument(1);
+            storedObjects.put(key, input.readAllBytes());
+            return null;
+        }).when(storageService).upload(anyString(), any(InputStream.class), anyLong(), anyString());
+        org.mockito.Mockito.when(storageService.download(anyString())).thenAnswer(invocation -> {
+            byte[] bytes = storedObjects.get(invocation.getArgument(0));
+            if (bytes == null) throw new IllegalStateException("missing object");
+            return new ByteArrayInputStream(bytes);
+        });
+        org.mockito.Mockito.doAnswer(invocation -> {
+            storedObjects.remove(invocation.getArgument(0));
+            return null;
+        }).when(storageService).delete(anyString());
     }
 
     // -------------------------------------------------------------------
@@ -384,6 +403,10 @@ class UploadControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.duplicate").value(true));
 
+        org.mockito.Mockito.verify(storageService, org.mockito.Mockito.times(1))
+                .upload(eq("_uploads/" + userId("alice@test.com") + "/" + sessionId + "/0"),
+                        any(InputStream.class), eq(100L), anyString());
+
         assertThat(uploadChunkRepository.findBySessionIdOrderByChunkIndexAsc(
                 UUID.fromString(sessionId))).hasSize(1);
     }
@@ -439,6 +462,119 @@ class UploadControllerTest {
                 .filter(response -> !response.isDuplicate())
                 .count();
         assertThat(freshWrites).isEqualTo(1);
+        assertThat(storedObjects.get("_uploads/" + userId("alice@test.com") + "/" + sessionId + "/0"))
+                .isEqualTo(bytes);
+    }
+
+    @Test
+    void conflictingRetryPreservesAcceptedBytesAndUploadCanComplete() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        String sessionId = createSession(token, "retry.bin", "application/octet-stream", 100);
+        UUID sessionUuid = UUID.fromString(sessionId);
+        byte[] accepted = freshBytes(100);
+        byte[] conflicting = accepted.clone();
+        conflicting[37] ^= 0x55;
+        String key = "_uploads/" + userId("alice@test.com") + "/" + sessionId + "/0";
+
+        putChunk(token, sessionId, 0, accepted).andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(jsonPath("$.duplicate").value(false));
+        String acceptedChecksum = uploadChunkRepository.findBySessionIdAndChunkIndex(sessionUuid, 0)
+                .orElseThrow().getChecksum();
+
+        putChunk(token, sessionId, 0, conflicting)
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isConflict());
+
+        UploadChunk row = uploadChunkRepository.findBySessionIdAndChunkIndex(sessionUuid, 0).orElseThrow();
+        assertThat(row.getChecksum()).isEqualTo(acceptedChecksum);
+        assertThat(storedObjects.get(key)).isEqualTo(accepted);
+
+        var completed = uploadSessionService.complete(auth("alice@test.com"), sessionUuid);
+        String finalKey = fileRepository.findById(completed.getId()).orElseThrow().getObjectKey();
+        assertThat(storedObjects.get(finalKey)).isEqualTo(accepted);
+        assertThat(uploadSessionRepository.findById(sessionUuid).orElseThrow().getStatus())
+                .isEqualTo(UploadSessionStatus.COMPLETED);
+    }
+
+    @Test
+    void sameIndexRetryWithWrongLengthFailsValidationWithoutChangingStoredObject() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        String sessionId = createSession(token, "length.bin", "application/octet-stream", 100);
+        UUID sessionUuid = UUID.fromString(sessionId);
+        Authentication auth = auth("alice@test.com");
+        byte[] accepted = freshBytes(100);
+        uploadSessionService.ingestChunk(auth, sessionUuid, 0, new ByteArrayInputStream(accepted));
+
+        assertThatThrownBy(() -> uploadSessionService.ingestChunk(auth, sessionUuid, 0,
+                new ByteArrayInputStream(freshBytes(99))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("expected size");
+        assertThat(storedObjects.get("_uploads/" + userId("alice@test.com") + "/" + sessionId + "/0"))
+                .isEqualTo(accepted);
+    }
+
+    @Test
+    void concurrentSameIndexDifferentPayloadsKeepTheWinningBytesAndChecksum() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        String sessionId = createSession(token, "race-conflict.bin", "application/octet-stream", 100);
+        UUID sessionUuid = UUID.fromString(sessionId);
+        Authentication auth = auth("alice@test.com");
+        byte[] first = freshBytes(100);
+        byte[] second = first.clone();
+        second[20] = 111;
+
+        List<Object> results = runConcurrently(
+                () -> uploadSessionService.ingestChunk(auth, sessionUuid, 0, new ByteArrayInputStream(first)),
+                () -> uploadSessionService.ingestChunk(auth, sessionUuid, 0, new ByteArrayInputStream(second)));
+
+        assertThat(results).anyMatch(ChunkUploadResponse.class::isInstance);
+        assertThat(failures(results)).hasSize(1)
+                .allMatch(com.minidrive.exception.UploadChunkConflictException.class::isInstance);
+        UploadChunk accepted = uploadChunkRepository.findBySessionIdAndChunkIndex(sessionUuid, 0).orElseThrow();
+        byte[] acceptedBytes = storedObjects.get(accepted.getStagingObjectKey());
+        assertThat(acceptedBytes).isIn(first, second);
+        assertThat(accepted.getChecksum()).isEqualTo(java.util.HexFormat.of().formatHex(
+                java.security.MessageDigest.getInstance("SHA-256").digest(acceptedBytes)));
+        assertThat(storedObjects).containsEntry(accepted.getStagingObjectKey(), acceptedBytes);
+    }
+
+    @Test
+    void abortWaitsForInFlightChunkAndRemovesTheAcceptedObject() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        String sessionId = createSession(token, "abort-race.bin", "application/octet-stream", 100);
+        UUID sessionUuid = UUID.fromString(sessionId);
+        Authentication auth = auth("alice@test.com");
+        byte[] bytes = freshBytes(100);
+        CountDownLatch writeStarted = new CountDownLatch(1);
+        CountDownLatch allowWrite = new CountDownLatch(1);
+        org.mockito.Mockito.doAnswer(invocation -> {
+            String key = invocation.getArgument(0);
+            InputStream input = invocation.getArgument(1);
+            byte[] uploaded = input.readAllBytes();
+            writeStarted.countDown();
+            assertThat(allowWrite.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            storedObjects.put(key, uploaded);
+            return null;
+        }).when(storageService).upload(anyString(), any(InputStream.class), anyLong(), anyString());
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Object> ingest = executor.submit(() -> uploadSessionService.ingestChunk(
+                    auth, sessionUuid, 0, new ByteArrayInputStream(bytes)));
+            assertThat(writeStarted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            Future<?> abort = executor.submit(() -> uploadSessionService.abort(auth, sessionUuid));
+            allowWrite.countDown();
+            ingest.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            abort.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            allowWrite.countDown();
+            executor.shutdownNow();
+        }
+
+        assertThat(uploadSessionRepository.findById(sessionUuid).orElseThrow().getStatus())
+                .isEqualTo(UploadSessionStatus.ABORTED);
+        assertThat(uploadChunkRepository.findBySessionIdOrderByChunkIndexAsc(sessionUuid)).isEmpty();
+        assertThat(storedObjects).doesNotContainKey(
+                "_uploads/" + userId("alice@test.com") + "/" + sessionId + "/0");
     }
 
     // -------------------------------------------------------------------
@@ -512,6 +648,8 @@ class UploadControllerTest {
 
         assertThat(uploadChunkRepository.findBySessionIdOrderByChunkIndexAsc(
                 UUID.fromString(sessionId))).isEmpty();
+        assertThat(storedObjects).doesNotContainKey(
+                "_uploads/" + userId("alice@test.com") + "/" + sessionId + "/0");
     }
 
     @Test
@@ -530,6 +668,7 @@ class UploadControllerTest {
         org.mockito.Mockito.verify(storageService).delete(stagingKey);
         assertThat(uploadChunkRepository.findBySessionIdOrderByChunkIndexAsc(
                 UUID.fromString(sessionId))).isEmpty();
+        assertThat(storedObjects).doesNotContainKey(stagingKey);
     }
 
     // -------------------------------------------------------------------

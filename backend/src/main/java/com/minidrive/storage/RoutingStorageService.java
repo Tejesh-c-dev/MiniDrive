@@ -7,6 +7,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -38,6 +41,7 @@ public class RoutingStorageService implements StorageService {
     private final boolean replicationEnabled;
     private final String primaryNodeId;
     private final Set<String> repairs = ConcurrentHashMap.newKeySet();
+    private TransactionTemplate deletionIntentTransaction;
     private final Map<String, AtomicInteger> nodeHealth = new ConcurrentHashMap<>();
 
     @Autowired
@@ -63,6 +67,32 @@ public class RoutingStorageService implements StorageService {
         if (replicationEnabled && !nodes.containsKey(primaryNodeId)) {
             throw new IllegalStateException("Configured replication primary is not enabled: " + primaryNodeId);
         }
+        if (replicationEnabled) {
+            validateReplicationEnablement();
+        }
+    }
+
+    private void validateReplicationEnablement() {
+        var keys = jdbc.query("select o.object_key, l.storage_node_id from "
+                        + "(select object_key from file_versions union select object_key from files) o "
+                        + "left join object_locations l on l.object_key=o.object_key order by o.object_key",
+                (rs, row) -> new String[] {rs.getString(1), rs.getString(2)});
+        for (String[] row : keys) {
+            if (row[1] == null || !hasVerifiedExpectation(row[0], row[1])) {
+                throw new IllegalStateException("Replication cannot be enabled: object integrity backfill is incomplete for " + row[0]
+                        + ". Run with MINIDRIVE_REPLICATION_BACKFILL=true while replication is disabled.");
+            }
+        }
+    }
+
+    private boolean hasVerifiedExpectation(String key, String node) {
+        String checksum = jdbc.query("select checksum from object_replicas where object_key=? and storage_node_id=? "
+                        + "and status='HEALTHY' and verified_at is not null",
+                rs -> rs.next() ? rs.getString(1) : null, key, node);
+        if (checksum == null || !checksum.matches("(?i)[0-9a-f]{64}")) return false;
+        Integer deleting = jdbc.query("select count(*) from object_replicas where object_key=? and status='DELETING'",
+                rs -> rs.next() ? rs.getInt(1) : 0, key);
+        return deleting == null || deleting == 0;
     }
 
     /** Compatibility constructor used by unit tests and non-Spring callers. */
@@ -74,6 +104,12 @@ public class RoutingStorageService implements StorageService {
     public RoutingStorageService(JdbcTemplate jdbc, Map<String, NodeStorageClient> nodes,
                                  StorageNodeSelector selector) {
         this(jdbc, nodes, selector, new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+    }
+
+    @Autowired
+    public void setTransactionManager(PlatformTransactionManager transactionManager) {
+        deletionIntentTransaction = new TransactionTemplate(transactionManager);
+        deletionIntentTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     private String existing(String key) {
@@ -160,38 +196,64 @@ public class RoutingStorageService implements StorageService {
 
     @Override
     public void delete(String key) {
-        if (!replicationEnabled) {
-            String location = existing(key);
-            if (location == null) return;
-            measure(location, "delete", () -> { client(location).delete(key); return null; });
-            jdbc.update("delete from object_locations where object_key=? and storage_node_id=?", key, location);
-            return;
-        }
+        withKeyLock(key, () -> { deleteLocked(key); return null; });
+    }
+
+    private void deleteLocked(String key) {
         String primary = existing(key);
-        if (primary == null) return;
-        RuntimeException primaryFailure = null;
-        try { measure(primary, "delete", () -> { client(primary).delete(key); return null; }); }
-        catch (RuntimeException e) { primaryFailure = e; }
-        for (String nodeId : nodes.keySet()) {
-            if (nodeId.equals(primary)) continue;
-            try { client(nodeId).delete(key); mark(key, nodeId, "FAILED", null, null, "delete failed"); }
-            catch (RuntimeException e) { markFailure(key, nodeId, e); }
+        Set<String> targets = new java.util.LinkedHashSet<>();
+        if (primary != null) targets.add(primary);
+        // A failed upload transaction can roll back object_locations after the
+        // object reached storage. Reconstruct only that upload's stable route;
+        // in replicated mode an unregistered key may exist on any configured node.
+        else if (replicationEnabled) targets.addAll(nodes.keySet());
+        else if (!nodes.isEmpty()) targets.add(selector.select(key, nodes.keySet()));
+        var replicaNodes = jdbc.query("select storage_node_id from object_replicas where object_key=?",
+                (rs, row) -> rs.getString(1), key);
+        if (replicaNodes != null) targets.addAll(replicaNodes);
+        if (replicationEnabled && primary != null) targets.addAll(nodes.keySet());
+        if (targets.isEmpty()) return;
+
+        // Persist a tombstone before touching storage. A process restart or a
+        // scheduled repair must not mistake a partly deleted object for a
+        // damaged replica and recreate it from another node.
+        ReplicaExpectation expected = expectation(key);
+        Runnable recordIntent = () -> {
+            for (String nodeId : targets) mark(key, nodeId, "DELETING", expected, null, "deletion pending");
+        };
+        if (deletionIntentTransaction == null) recordIntent.run();
+        else deletionIntentTransaction.executeWithoutResult(status -> recordIntent.run());
+
+        RuntimeException failure = null;
+        for (String nodeId : targets) {
+            try {
+                measure(nodeId, "delete", () -> { client(nodeId).delete(key); return null; });
+            } catch (RuntimeException nodeFailure) {
+                jdbc.update("update object_replicas set last_error=?,updated_at=current_timestamp "
+                                + "where object_key=? and storage_node_id=? and status='DELETING'",
+                        nodeFailure.getMessage(), key, nodeId);
+                if (failure == null) failure = nodeFailure;
+                else failure.addSuppressed(nodeFailure);
+            }
         }
-        if (primaryFailure != null) throw primaryFailure;
+        // Keep every location/replica reference while any physical deletion is
+        // uncertain. The durable caller can retry this key after storage recovers.
+        if (failure != null) throw failure;
         jdbc.update("delete from object_locations where object_key=?", key);
+        jdbc.update("delete from object_replicas where object_key=?", key);
     }
 
     /** Runs one bounded repair pass; exposed for deterministic tests and operations. */
     public int repairOnce() {
         if (!replicationEnabled) return 0;
         var rows = jdbc.query("select object_key, storage_node_id from object_replicas "
-                        + "where status <> 'HEALTHY' and (next_attempt_at is null or next_attempt_at <= current_timestamp) "
+                        + "where status in ('PENDING','FAILED') and (next_attempt_at is null or next_attempt_at <= current_timestamp) "
                         + "order by updated_at limit 100",
                 (rs, row) -> new String[] {rs.getString(1), rs.getString(2)});
         int repaired = 0;
         for (String[] row : rows) if (repairs.add(row[0] + "\0" + row[1])) {
             try {
-                if (heal(row[0], row[1])) repaired++;
+                if (withKeyLock(row[0], () -> heal(row[0], row[1]))) repaired++;
             } finally { repairs.remove(row[0] + "\0" + row[1]); }
         }
         return repaired;
@@ -207,6 +269,7 @@ public class RoutingStorageService implements StorageService {
     }
 
     private boolean heal(String key, String target) {
+        if (isDeleting(key) || !isRepairPending(key, target)) return false;
         ReplicaExpectation expected = expectation(key);
         String source = healthySource(key, target);
         if (source == null) { markFailure(key, target, new StorageException("No healthy source for repair")); return false; }
@@ -297,6 +360,28 @@ public class RoutingStorageService implements StorageService {
         Integer count = jdbc.query("select count(*) from object_replicas where object_key=? and storage_node_id=? and status='HEALTHY'",
                 rs -> rs.next() ? rs.getInt(1) : 0, key, node);
         return count != null && count > 0;
+    }
+
+    private boolean isDeleting(String key) {
+        Integer count = jdbc.query("select count(*) from object_replicas where object_key=? and status='DELETING'",
+                rs -> rs.next() ? rs.getInt(1) : 0, key);
+        return count != null && count > 0;
+    }
+
+    private boolean isRepairPending(String key, String node) {
+        Integer count = jdbc.query("select count(*) from object_replicas "
+                        + "where object_key=? and storage_node_id=? and status in ('PENDING','FAILED')",
+                rs -> rs.next() ? rs.getInt(1) : 0, key, node);
+        return count != null && count > 0;
+    }
+
+    /**
+     * In-process locking avoids needless database round trips for H2-backed
+     * tests. PostgreSQL advisory locks also serialize workers in separate app
+     * instances, and are session-scoped so they cover the storage I/O itself.
+     */
+    private <T> T withKeyLock(String key, java.util.function.Supplier<T> action) {
+        return StorageKeyLock.withKeyLock(jdbc, key, action);
     }
 
     private String healthySource(String key, String target) {

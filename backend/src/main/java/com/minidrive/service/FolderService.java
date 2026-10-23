@@ -5,6 +5,7 @@ import com.minidrive.dto.folder.FolderResponse;
 import com.minidrive.entity.Folder;
 import com.minidrive.entity.User;
 import com.minidrive.exception.ForbiddenException;
+import com.minidrive.exception.FolderDeletionInProgressException;
 import com.minidrive.exception.ResourceNotFoundException;
 import com.minidrive.mapper.FolderMapper;
 import com.minidrive.repository.FolderRepository;
@@ -23,20 +24,15 @@ public class FolderService {
     private final FolderRepository folderRepository;
     private final UserRepository userRepository;
 
-    /**
-     * Deleting a folder cascades to the files inside it, so that listing cache
-     * must be evicted too; folder creation and rename leave every file listing
-     * untouched.
-     */
-    private final FileListingCache fileListingCache;
+    private final FolderDeletionLifecycle deletionLifecycle;
 
     public FolderService(
             FolderRepository folderRepository,
             UserRepository userRepository,
-            FileListingCache fileListingCache) {
+            FolderDeletionLifecycle deletionLifecycle) {
         this.folderRepository = folderRepository;
         this.userRepository = userRepository;
-        this.fileListingCache = fileListingCache;
+        this.deletionLifecycle = deletionLifecycle;
     }
 
     @Transactional
@@ -45,8 +41,10 @@ public class FolderService {
             FolderRequest request) {
 
         User owner = currentUser(authentication);
+        userRepository.findByIdForUpdate(owner.getId()).orElseThrow();
         String name = normalizeName(request.getName());
         Folder parent = resolveOwnedParent(owner, request.getParentFolderId());
+        assertFolderWritable(parent);
 
         assertNameAvailable(owner, parent, name);
 
@@ -71,6 +69,7 @@ public class FolderService {
         }
 
         Folder parent = getOwnedFolder(owner, parentFolderId);
+        assertFolderWritable(parent);
 
         return folderRepository
                 .findByOwnerIdAndParentFolderId(owner.getId(), parent.getId())
@@ -86,7 +85,9 @@ public class FolderService {
 
         User owner = currentUser(authentication);
 
-        return FolderMapper.toResponse(getOwnedFolder(owner, id));
+        Folder folder = getOwnedFolder(owner, id);
+        assertFolderWritable(folder);
+        return FolderMapper.toResponse(folder);
     }
 
     @Transactional
@@ -96,7 +97,9 @@ public class FolderService {
             FolderRequest request) {
 
         User owner = currentUser(authentication);
+        userRepository.findByIdForUpdate(owner.getId()).orElseThrow();
         Folder folder = getOwnedFolder(owner, id);
+        assertFolderWritable(folder);
 
         String name = normalizeName(request.getName());
 
@@ -108,19 +111,25 @@ public class FolderService {
         return FolderMapper.toResponse(folder);
     }
 
-    @Transactional
-    public void delete(
+    public DeletionResult delete(
             Authentication authentication,
             UUID id) {
 
         User owner = currentUser(authentication);
         Folder folder = getOwnedFolder(owner, id);
 
-        folderRepository.delete(folder);
+        UUID jobId = deletionLifecycle.request(folder.getId(), owner.getId());
+        if (jobId == null) return new DeletionResult(null, true, "COMPLETED");
+        boolean complete = deletionLifecycle.attemptIfDue(jobId);
+        return new DeletionResult(jobId, complete, complete ? "COMPLETED" : "PENDING");
+    }
 
-        // The database cascades this delete to the folder's files (and to those
-        // of its subfolders), so their cached listing entries must go too.
-        fileListingCache.evictAfterCommit();
+    public record DeletionResult(UUID jobId, boolean complete, String status) { }
+
+    /** Reject writes targeting a folder within a subtree already being removed. */
+    private void assertFolderWritable(Folder folder) {
+        if (folder != null && folderRepository.hasDeletingAncestor(folder.getId()))
+            throw new FolderDeletionInProgressException();
     }
 
     private User currentUser(Authentication authentication) {

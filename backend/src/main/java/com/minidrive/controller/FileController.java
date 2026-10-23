@@ -179,12 +179,12 @@ public class FileController {
     }
 
     @DeleteMapping("/api/files/{id}")
-    public ResponseEntity<Void> delete(
+    public ResponseEntity<?> delete(
             @PathVariable UUID id,
             Authentication authentication) {
 
-        fileService.delete(authentication, id);
-
-        return ResponseEntity.noContent().build();
+        FileService.DeletionResult result = fileService.delete(authentication, id);
+        if (result.complete()) return ResponseEntity.noContent().build();
+        return ResponseEntity.accepted().header("Retry-After", "30").body(result);
     }
 }

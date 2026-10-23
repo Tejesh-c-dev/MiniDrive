@@ -24,6 +24,7 @@
     <properties>
         <java.version>17</java.version>
         <minidrive.live-minio>false</minidrive.live-minio>
+        <minidrive.live-pg-minio>false</minidrive.live-pg-minio>
     </properties>
 
     <dependencies>
@@ -179,6 +180,7 @@
                     <argLine>-Duser.timezone=UTC</argLine>
                     <systemPropertyVariables>
                         <minidrive.live-minio>${minidrive.live-minio}</minidrive.live-minio>
+                        <minidrive.live-pg-minio>${minidrive.live-pg-minio}</minidrive.live-pg-minio>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>

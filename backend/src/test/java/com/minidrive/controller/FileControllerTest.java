@@ -3,8 +3,14 @@ package com.minidrive.controller;
 import com.jayway.jsonpath.JsonPath;
 import com.minidrive.repository.FileRepository;
 import com.minidrive.repository.FileVersionRepository;
+import com.minidrive.repository.FolderDeletionJobRepository;
+import com.minidrive.repository.FolderDeletionObjectRepository;
 import com.minidrive.entity.File;
+import com.minidrive.entity.FileRole;
+import com.minidrive.entity.Permission;
+import com.minidrive.service.FileService;
 import com.minidrive.repository.FolderRepository;
+import com.minidrive.repository.PermissionRepository;
 import com.minidrive.repository.UserRepository;
 import com.minidrive.storage.StorageService;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -47,12 +53,19 @@ class FileControllerTest {
     @Autowired private FolderRepository folderRepository;
     @MockitoSpyBean private FileRepository fileRepository;
     @Autowired private FileVersionRepository fileVersionRepository;
+    @Autowired private PermissionRepository permissionRepository;
+    @Autowired private FileService fileService;
+    @Autowired private FolderDeletionJobRepository deletionJobs;
+    @Autowired private FolderDeletionObjectRepository deletionObjects;
     @Autowired private MeterRegistry meterRegistry;
     @MockitoBean private StorageService storageService;
 
     @BeforeEach
     void cleanup() {
+        deletionObjects.deleteAll();
+        deletionJobs.deleteAll();
         fileVersionRepository.deleteAll();
+        permissionRepository.deleteAll();
         fileRepository.deleteAll();
         folderRepository.deleteAll();
         userRepository.deleteAll();
@@ -212,6 +225,103 @@ class FileControllerTest {
     }
 
     @Test
+    void patchRejectsContentDerivedFieldsAtomicallyAndKeepsStoredContentMetadata() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        byte[] acceptedBytes = "verified bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        var storedBytes = new java.util.concurrent.atomic.AtomicReference<byte[]>();
+        org.mockito.Mockito.doAnswer(invocation -> {
+            storedBytes.set(((java.io.InputStream) invocation.getArgument(1)).readAllBytes());
+            return null;
+        }).when(storageService).upload(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any(java.io.InputStream.class),
+                org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString());
+        org.mockito.Mockito.when(storageService.download(org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(invocation -> new ByteArrayInputStream(storedBytes.get()));
+        String uploadBody = mockMvc.perform(multipart("/api/files")
+                        .file(new MockMultipartFile("file", "draft.txt", "text/plain", acceptedBytes))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String fileId = JsonPath.read(uploadBody, "$.id");
+        File before = fileRepository.findById(UUID.fromString(fileId)).orElseThrow();
+        String checksum = before.getChecksum();
+
+        for (String body : new String[] {
+                "{\"sizeBytes\":999}",
+                "{\"checksum\":\"forged\"}",
+                "{\"contentType\":\"application/pdf\"}",
+                "{\"name\":\"unsafe-rename.txt\",\"sizeBytes\":999,\"checksum\":\"forged\",\"contentType\":\"application/pdf\"}"
+        }) {
+            mockMvc.perform(patch("/api/files/" + fileId)
+                            .header("Authorization", "Bearer " + token)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(body))
+                    .andExpect(status().isBadRequest());
+        }
+
+        File after = fileRepository.findById(UUID.fromString(fileId)).orElseThrow();
+        org.junit.jupiter.api.Assertions.assertEquals("draft.txt", after.getName());
+        org.junit.jupiter.api.Assertions.assertEquals(acceptedBytes.length, after.getSizeBytes());
+        org.junit.jupiter.api.Assertions.assertEquals("text/plain", after.getContentType());
+        org.junit.jupiter.api.Assertions.assertEquals(checksum, after.getChecksum());
+        org.junit.jupiter.api.Assertions.assertArrayEquals(acceptedBytes, storedBytes.get());
+        var download = mockMvc.perform(get("/api/files/" + fileId + "/download")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk()).andReturn();
+        org.junit.jupiter.api.Assertions.assertTrue(download.getRequest().isAsyncStarted());
+        var downloaded = mockMvc.perform(asyncDispatch(download))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
+                        .contentType("text/plain"))
+                .andReturn().getResponse();
+        org.junit.jupiter.api.Assertions.assertArrayEquals(acceptedBytes, downloaded.getContentAsByteArray());
+
+        // Direct service callers also pass through the invariant check.
+        var directRequest = new com.minidrive.dto.file.FileMetadataUpdateRequest();
+        directRequest.setName("unsafe-direct-rename.txt");
+        directRequest.recordUnsupportedProperty("checksum", "forged");
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> fileService.update(
+                        new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                                "alice@test.com", "", java.util.List.of()),
+                        UUID.fromString(fileId), directRequest));
+        after = fileRepository.findById(UUID.fromString(fileId)).orElseThrow();
+        org.junit.jupiter.api.Assertions.assertEquals("draft.txt", after.getName());
+        org.junit.jupiter.api.Assertions.assertEquals(checksum, after.getChecksum());
+    }
+
+    @Test
+    void patchAuthorizationRemainsOwnerAndEditorOnly() throws Exception {
+        String ownerToken = registerAndGetToken("Alice", "alice@test.com");
+        String editorToken = registerAndGetToken("Bob", "bob@test.com");
+        String viewerToken = registerAndGetToken("Carol", "carol@test.com");
+        String fileId = createFileAndGetId(ownerToken, "shared.txt", null, "text/plain", 5);
+        File file = fileRepository.findById(UUID.fromString(fileId)).orElseThrow();
+        permissionRepository.saveAndFlush(new Permission(file,
+                userRepository.findByEmail("bob@test.com").orElseThrow(), FileRole.EDITOR));
+        permissionRepository.saveAndFlush(new Permission(file,
+                userRepository.findByEmail("carol@test.com").orElseThrow(), FileRole.VIEWER));
+
+        mockMvc.perform(patch("/api/files/" + fileId)
+                        .header("Authorization", "Bearer " + viewerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"viewer.txt\"}"))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(patch("/api/files/" + fileId)
+                        .header("Authorization", "Bearer " + editorToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"editor.txt\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(patch("/api/files/" + fileId)
+                        .header("Authorization", "Bearer " + ownerToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"owner.txt\"}"))
+                .andExpect(status().isOk());
+        org.junit.jupiter.api.Assertions.assertEquals("owner.txt",
+                fileRepository.findById(UUID.fromString(fileId)).orElseThrow().getName());
+    }
+
+    @Test
     void deleteFileRemovesStorageObjectAndMetadata() throws Exception {
         double before = timerCount("delete", "success");
         String token = registerAndGetToken("Alice", "alice@test.com");
@@ -270,8 +380,8 @@ class FileControllerTest {
     }
 
     @Test
-    void storageDeleteFailurePreservesMetadataAndReturnsControlledError() throws Exception {
-        double before = timerCount("delete", "failure");
+    void storageDeleteFailureReturnsAcceptedAndKeepsDurableCleanupWork() throws Exception {
+        double before = timerCount("delete", "success");
         String token = registerAndGetToken("Alice", "alice@test.com");
         String fileId = createFileAndGetId(token, "keep.txt", null, "text/plain", 1);
         File file = fileRepository.findById(UUID.fromString(fileId)).orElseThrow();
@@ -279,16 +389,17 @@ class FileControllerTest {
                 .when(storageService).delete(file.getObjectKey());
 
         mockMvc.perform(delete("/api/files/" + fileId).header("Authorization", "Bearer " + token))
-                .andExpect(status().isBadGateway())
-                .andExpect(jsonPath("$.error").value("File storage operation failed"));
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.status").value("PENDING"));
 
-        org.junit.jupiter.api.Assertions.assertTrue(fileRepository.findById(UUID.fromString(fileId)).isPresent());
-        org.junit.jupiter.api.Assertions.assertEquals(before + 1, timerCount("delete", "failure"));
-        org.mockito.Mockito.verify(fileRepository, org.mockito.Mockito.never()).delete(file);
+        org.junit.jupiter.api.Assertions.assertTrue(fileRepository.findById(UUID.fromString(fileId)).isEmpty());
+        org.junit.jupiter.api.Assertions.assertEquals(1, deletionJobs.count());
+        org.junit.jupiter.api.Assertions.assertEquals(before + 1, timerCount("delete", "success"));
+        org.mockito.Mockito.verify(storageService).delete(file.getObjectKey());
     }
 
     @Test
-    void metadataDeleteFailureIsPropagatedAfterStorageDeletion() throws Exception {
+    void metadataDeleteFailureDoesNotCallStorageAndKeepsFileUsable() throws Exception {
         String token = registerAndGetToken("Alice", "alice@test.com");
         String fileId = createFileAndGetId(token, "db-failure.txt", null, "text/plain", 1);
         File file = fileRepository.findById(UUID.fromString(fileId)).orElseThrow();
@@ -299,7 +410,7 @@ class FileControllerTest {
                 () -> mockMvc.perform(delete("/api/files/" + fileId)
                         .header("Authorization", "Bearer " + token)));
 
-        org.mockito.Mockito.verify(storageService).delete(file.getObjectKey());
+        org.mockito.Mockito.verify(storageService, org.mockito.Mockito.never()).delete(file.getObjectKey());
         org.junit.jupiter.api.Assertions.assertTrue(fileRepository.findById(UUID.fromString(fileId)).isPresent());
     }
 

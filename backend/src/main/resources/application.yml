@@ -79,9 +79,15 @@ minio:
   bucket: ${MINIO_BUCKET:minidrive-files}
 
 minidrive:
+  cleanup-journal:
+    directory: ${MINIDRIVE_CLEANUP_JOURNAL_DIR:./data/cleanup-journal}
+    retry-delay-ms: ${MINIDRIVE_CLEANUP_JOURNAL_RETRY_DELAY_MS:30000}
+    initial-delay-ms: ${MINIDRIVE_CLEANUP_JOURNAL_INITIAL_DELAY_MS:30000}
   storage:
     replication:
       enabled: ${MINIDRIVE_REPLICATION_ENABLED:false}
+      # One-shot, explicit operator mode. Keep replication disabled while running.
+      backfill: ${MINIDRIVE_REPLICATION_BACKFILL:false}
       primary-node-id: ${MINIDRIVE_PRIMARY_NODE_ID:primary}
       repair-delay-ms: ${MINIDRIVE_REPAIR_DELAY_MS:30000}
     nodes:

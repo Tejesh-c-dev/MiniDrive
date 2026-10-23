@@ -11,6 +11,7 @@ import com.minidrive.entity.FileVersion;
 import com.minidrive.entity.Folder;
 import com.minidrive.entity.User;
 import com.minidrive.exception.ForbiddenException;
+import com.minidrive.exception.FolderDeletionInProgressException;
 import com.minidrive.exception.ResourceNotFoundException;
 import com.minidrive.mapper.FileMapper;
 import com.minidrive.mapper.FileVersionMapper;
@@ -64,6 +65,8 @@ public class FileService {
      * request first, then asks the cache for the already-authorized result.
      */
     private final FileListingCache fileListingCache;
+    private final FolderDeletionLifecycle folderDeletionLifecycle;
+    private final CleanupIntentJournal cleanupJournal;
 
     public FileService(
             FileRepository fileRepository,
@@ -72,7 +75,9 @@ public class FileService {
             UserRepository userRepository,
             StorageService storageService,
             FileAccessService fileAccessService,
-            FileListingCache fileListingCache) {
+            FileListingCache fileListingCache,
+            FolderDeletionLifecycle folderDeletionLifecycle,
+            CleanupIntentJournal cleanupJournal) {
         this.fileRepository = fileRepository;
         this.fileVersionRepository = fileVersionRepository;
         this.folderRepository = folderRepository;
@@ -80,12 +85,15 @@ public class FileService {
         this.storageService = storageService;
         this.fileAccessService = fileAccessService;
         this.fileListingCache = fileListingCache;
+        this.folderDeletionLifecycle = folderDeletionLifecycle;
+        this.cleanupJournal = cleanupJournal;
     }
 
     @Transactional
     @MeasuredOperation("upload")
     public FileUploadResponse upload(Authentication authentication, MultipartFile multipartFile, UUID folderId) {
         User owner = currentUser(authentication);
+        userRepository.findByIdForUpdate(owner.getId()).orElseThrow();
         if (multipartFile == null || multipartFile.isEmpty()) {
             throw new IllegalArgumentException("File must not be empty");
         }
@@ -98,6 +106,7 @@ public class FileService {
         Folder folder = resolveOwnedFolder(owner, folderId);
         assertNameAvailable(owner, folder, name);
         String objectKey = buildObjectKey(owner.getId(), name);
+        cleanupJournal.guardUntilTransactionCompletes(objectKey);
 
         MessageDigest digest = sha256Digest();
         try (var input = new DigestInputStream(multipartFile.getInputStream(), digest)) {
@@ -122,9 +131,9 @@ public class FileService {
         } catch (RuntimeException databaseFailure) {
             try {
                 storageService.delete(objectKey);
+                cleanupJournal.resolve(objectKey);
             } catch (RuntimeException cleanupFailure) {
-                log.error("Failed to clean up Silo object {} after metadata persistence failure", objectKey, cleanupFailure);
-                databaseFailure.addSuppressed(cleanupFailure);
+                preserveFailedObjectCleanup(objectKey, databaseFailure, cleanupFailure);
             }
             throw databaseFailure;
         }
@@ -136,6 +145,7 @@ public class FileService {
             FileMetadataRequest request) {
 
         User owner = currentUser(authentication);
+        userRepository.findByIdForUpdate(owner.getId()).orElseThrow();
 
         String name = normalizeAndValidateName(request.getName());
         String contentType = normalizeAndValidateContentType(request.getContentType());
@@ -183,6 +193,7 @@ public class FileService {
         }
 
         Folder folder = getOwnedFolder(owner, folderId);
+        assertFolderWritable(folder);
 
         return fileListingCache.findOwnedFileSummaries(owner.getId(), folder.getId());
     }
@@ -198,6 +209,7 @@ public class FileService {
 
         User owner = currentUser(authentication);
         Folder folder = getOwnedFolder(owner, folderId);
+        assertFolderWritable(folder);
 
         return fileListingCache.findOwnedFileSummaries(owner.getId(), folder.getId());
     }
@@ -216,6 +228,7 @@ public class FileService {
         }
 
         File file = access.file();
+        assertFileFolderWritable(file);
         return FileMapper.toMetadataResponse(file, currentVersion(file.getId()));
     }
 
@@ -238,8 +251,17 @@ public class FileService {
                     "You do not have permission to modify this file");
         }
 
+        // Reject the entire request before changing the managed entity. This
+        // also protects direct service callers that bypass MVC validation.
+        if (request.hasContentMetadataUpdateRequested()) {
+            throw new IllegalArgumentException(
+                    "Content type, size, and checksum can only change with verified content");
+        }
+
         File file = access.file();
         User fileOwner = file.getOwner();
+        userRepository.findByIdForUpdate(fileOwner.getId()).orElseThrow();
+        assertFileFolderWritable(file);
 
         Folder targetFolder = file.getFolder();
         String targetName = file.getName();
@@ -257,6 +279,7 @@ public class FileService {
                             "You do not have permission to move this file");
                 }
                 targetFolder = getOwnedFolder(fileOwner, request.getFolderId());
+                assertFolderWritable(targetFolder);
                 changed = true;
             }
         }
@@ -295,20 +318,8 @@ public class FileService {
             }
         }
 
-        if (request.getContentType() != null) {
-            file.setContentType(normalizeAndValidateContentType(request.getContentType()));
-        }
-
-        if (request.getSizeBytes() != null) {
-            file.setSizeBytes(validateSize(request.getSizeBytes()));
-        }
-
-        if (request.getChecksum() != null) {
-            file.setChecksum(normalizeChecksum(request.getChecksum()));
-        }
-
-        // The file's listing entry can have changed in name, folder, size,
-        // content type or version; clear the affected listings after commit.
+        // Only logical metadata changes here; content-derived fields are set
+        // by the verified upload, replacement, completion, and restore paths.
         fileListingCache.evictAfterCommit();
 
         return FileMapper.toMetadataResponse(file, currentVersion(file.getId()));
@@ -357,6 +368,8 @@ public class FileService {
 
         File file = access.file();
         User fileOwner = file.getOwner();
+        userRepository.findByIdForUpdate(fileOwner.getId()).orElseThrow();
+        assertFileFolderWritable(file);
 
         String originalFilename = multipartFile.getOriginalFilename();
         if (originalFilename == null || originalFilename.isBlank()) {
@@ -371,6 +384,7 @@ public class FileService {
         contentType = normalizeAndValidateContentType(contentType);
 
         String objectKey = buildObjectKey(fileOwner.getId(), originalFilename);
+        cleanupJournal.guardUntilTransactionCompletes(objectKey);
 
         MessageDigest digest = sha256Digest();
         try (var input = new DigestInputStream(multipartFile.getInputStream(), digest)) {
@@ -408,10 +422,9 @@ public class FileService {
             // object stays in storage so earlier versions remain recoverable.
             try {
                 storageService.delete(objectKey);
+                cleanupJournal.resolve(objectKey);
             } catch (RuntimeException cleanupFailure) {
-                log.error("Failed to clean up Silo object {} after version persistence failure",
-                        objectKey, cleanupFailure);
-                databaseFailure.addSuppressed(cleanupFailure);
+                preserveFailedObjectCleanup(objectKey, databaseFailure, cleanupFailure);
             }
             throw databaseFailure;
         }
@@ -523,6 +536,7 @@ public class FileService {
         if (!access.hasAccess()) {
             throw new ForbiddenException("You do not have access to this file");
         }
+        assertFileFolderWritable(access.file());
 
         return fileVersionRepository
                 .findByFileIdOrderByVersionNumberDesc(access.file().getId())
@@ -550,6 +564,7 @@ public class FileService {
         if (!access.hasAccess()) {
             throw new ResourceNotFoundException("File not found");
         }
+        assertFileFolderWritable(access.file());
 
         FileVersion version = requireVersion(access.file(), versionId);
 
@@ -595,12 +610,15 @@ public class FileService {
         if (!access.canEdit()) {
             throw new ForbiddenException("You do not have permission to restore this file");
         }
+        userRepository.findByIdForUpdate(access.file().getOwner().getId()).orElseThrow();
+        assertFileFolderWritable(access.file());
 
         File file = access.file();
         FileVersion version = requireVersion(file, versionId);
 
         String objectKey = buildObjectKey(
                 file.getOwner().getId(), version.getOriginalFilename());
+        cleanupJournal.guardUntilTransactionCompletes(objectKey);
 
         // Stream the historical object into a fresh key. The full file is never
         // buffered in memory and the original object is only ever read.
@@ -640,18 +658,16 @@ public class FileService {
             // version object is left intact.
             try {
                 storageService.delete(objectKey);
+                cleanupJournal.resolve(objectKey);
             } catch (RuntimeException cleanupFailure) {
-                log.error("Failed to clean up Silo object {} after restore persistence failure",
-                        objectKey, cleanupFailure);
-                databaseFailure.addSuppressed(cleanupFailure);
+                preserveFailedObjectCleanup(objectKey, databaseFailure, cleanupFailure);
             }
             throw databaseFailure;
         }
     }
 
-    @Transactional
     @MeasuredOperation("delete")
-    public void delete(
+    public DeletionResult delete(
             Authentication authentication,
             UUID id) {
 
@@ -668,31 +684,21 @@ public class FileService {
         }
 
         File file = access.file();
+        assertFileFolderWritable(file);
 
-        // Silo and PostgreSQL cannot share a transaction. Remove the stored object
-        // first so a storage failure leaves metadata intact and retryable. Silo's
-        // remove operation is safe when the object is already absent.
-        //
-        // Phase 7.1 retention decision: only the current version's object is
-        // removed here. The file's file_versions rows go away through the FK
-        // cascade, but their historical storage objects are deliberately left in
-        // place. Wiping them here would silently make file deletion destructive
-        // to version history, so retention/cleanup is deferred to a later phase.
-        storageService.delete(file.getObjectKey());
-
-        try {
-            fileRepository.delete(file);
-            fileRepository.flush();
-            fileListingCache.evictAfterCommit();
-        } catch (RuntimeException databaseFailure) {
-            // The object cannot be reconstructed without downloading and retaining
-            // its bytes, so report the failure and keep the rolled-back row for
-            // reconciliation instead of claiming deletion succeeded.
-            log.error("Silo object {} was deleted but metadata deletion failed for file {}",
-                    file.getObjectKey(), id, databaseFailure);
-            throw databaseFailure;
-        }
+        // Commit metadata removal and the existing durable object manifest
+        // together before touching storage. If PostgreSQL rolls back, the file
+        // and its bytes remain usable. Once committed, the file is no longer
+        // readable and FolderDeletionLifecycle retries physical cleanup after
+        // failures or restart. Only the current key is scheduled: historical
+        // version objects remain retained as before.
+        UUID jobId = folderDeletionLifecycle.requestFile(id, file.getOwner().getId());
+        if (jobId == null) return new DeletionResult(null, true, "COMPLETED");
+        boolean complete = folderDeletionLifecycle.attemptIfDue(jobId);
+        return new DeletionResult(jobId, complete, complete ? "COMPLETED" : "PENDING");
     }
+
+    public record DeletionResult(UUID jobId, boolean complete, String status) { }
 
     @Transactional
     @MeasuredOperation("download")
@@ -703,6 +709,7 @@ public class FileService {
         if (!access.hasAccess()) {
             throw new ResourceNotFoundException("File not found");
         }
+        assertFileFolderWritable(access.file());
 
         File file = access.file();
 
@@ -744,7 +751,31 @@ public class FileService {
             return null;
         }
 
-        return getOwnedFolder(owner, folderId);
+        Folder folder = getOwnedFolder(owner, folderId);
+        assertFolderWritable(folder);
+        return folder;
+    }
+
+    private void assertFolderWritable(Folder folder) {
+        if (folder != null && folderRepository.hasDeletingAncestor(folder.getId()))
+            throw new FolderDeletionInProgressException();
+    }
+
+    private void assertFileFolderWritable(File file) {
+        if (file.getFolder() != null) assertFolderWritable(file.getFolder());
+    }
+
+    private void preserveFailedObjectCleanup(String key, RuntimeException databaseFailure,
+            RuntimeException cleanupFailure) {
+        log.error("Failed to clean up Silo object {}; persisting retry work", key, cleanupFailure);
+        databaseFailure.addSuppressed(cleanupFailure);
+        try {
+            folderDeletionLifecycle.scheduleObjectCleanup(key);
+        } catch (RuntimeException persistenceFailure) {
+            log.error("Unable to persist retry work for Silo object {}; reconciliation is required",
+                    key, persistenceFailure);
+            databaseFailure.addSuppressed(persistenceFailure);
+        }
     }
 
     private void assertNameAvailable(User owner, Folder folder, String name) {

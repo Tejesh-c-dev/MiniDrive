@@ -161,3 +161,77 @@ checks staged chunk hashes before finalizing metadata.
 Physical content deduplication is deferred. The current deletion lifecycle treats
 each file version as owning its object, so sharing object keys needs transactional
 reference tracking before objects can safely be reused.
+
+## Cleanup recovery when PostgreSQL is unavailable
+
+Before writing an object, MiniDrive forces a write-ahead intent to an independent
+filesystem journal at `MINIDRIVE_CLEANUP_JOURNAL_DIR` (default
+`./data/cleanup-journal`). A committed database transaction resolves that intent;
+a rollback leaves it for recovery. If compensation fails, MiniDrive also attempts
+the existing PostgreSQL deletion job, while the independent intent remains as a
+fallback if PostgreSQL cannot persist the job. The scheduled replay takes a
+per-key process and filesystem lock, checks current file, version, chunk, and
+folder-deletion references, and then retries the idempotent storage delete. A
+referenced key is preserved and its redundant intent is resolved. Database and
+storage errors leave the intent pending for later runs.
+
+The journal directory must be on durable storage shared by every MiniDrive
+instance and worker, with cross-process file locks supported. Do not use an
+ephemeral container filesystem or a network filesystem with unreliable locking.
+Keep adequate free space and monitor the journal error logs. If PostgreSQL and
+Silo remain unavailable, entries remain pending. If the journal volume itself is
+unavailable or lost, the application reports that both recovery paths failed and
+operator reconciliation is required; there is no third independent copy. The
+JDK cannot fsync directory metadata on Windows, so power-loss durability there
+depends on the mounted filesystem. Linux deployment filesystems must support
+directory fsync for the journal's full durability guarantee.
+# Existing data migration to replication
+
+Replication remains disabled by default. Before enabling it on a database that
+already has files, run the integrity reconciliation once with
+`MINIDRIVE_REPLICATION_ENABLED=false` and `MINIDRIVE_REPLICATION_BACKFILL=true`.
+Keep all storage nodes that may hold existing objects configured and enabled
+for this run. Before running, inspect the inventory and unresolved locations:
+
+```sql
+select count(*) as durable_objects
+from (select object_key from file_versions union select object_key from files) objects;
+
+select object_key
+from (select object_key from file_versions union select object_key from files) objects
+left join object_locations using (object_key)
+where object_locations.object_key is null;
+```
+
+The backfill scans current file objects and version history in pages of 100,
+streams each copy to calculate SHA-256 and length, and records primary and
+secondary state only after the stream completes. Missing or corrupt secondary
+copies are recorded `FAILED` for normal repair; the backfill does not create
+copies. The `secondaryUnverified` count and per-key logs report those copies.
+Missing/unreadable authoritative objects and records without a known location
+make the run exit unsuccessfully and are logged by object key. A run with only
+unverified secondary copies can complete because those copies are never trusted;
+the required authoritative integrity metadata is verified, and normal repair
+can create the secondary copy after replication is enabled.
+
+After a successful run, confirm the report has `failed=0`, `missingLocation=0`,
+and `skippedDeleting=0`. Resolve primary failures and missing locations; review
+`secondaryUnverified` and its object logs as repair work. Then start normally with
+`MINIDRIVE_REPLICATION_BACKFILL=false` and
+`MINIDRIVE_REPLICATION_ENABLED=true`. Startup checks every durable version
+object has a verified, healthy expectation on its recorded authoritative node.
+It refuses to serve in replication mode while any expectation is missing.
+Staged `_uploads/` chunk objects are not durable file versions and are excluded;
+they continue to use the existing upload lifecycle.
+
+Example from `backend` (set the normal database, JWT, and storage environment
+variables for each invocation):
+
+```powershell
+$env:MINIDRIVE_REPLICATION_ENABLED = 'false'
+$env:MINIDRIVE_REPLICATION_BACKFILL = 'true'
+.\mvnw.cmd spring-boot:run "-Dspring-boot.run.arguments=--spring.main.web-application-type=none"
+```
+
+Stop that process after a successful report, set backfill to `false`, enable
+replication, and restart. The operation is safe to rerun after interruptions.

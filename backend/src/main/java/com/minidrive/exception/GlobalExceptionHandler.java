@@ -23,6 +23,16 @@ public class GlobalExceptionHandler {
                 .body(Map.of("error", "The resource was changed by another request; retry with the latest state"));
     }
 
+    @ExceptionHandler(FolderDeletionInProgressException.class)
+    public ResponseEntity<?> handleFolderDeletionInProgress(FolderDeletionInProgressException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(UploadChunkConflictException.class)
+    public ResponseEntity<?> handleUploadChunkConflict(UploadChunkConflictException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", ex.getMessage()));
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<?> handleIllegalArgument(
             IllegalArgumentException ex) {

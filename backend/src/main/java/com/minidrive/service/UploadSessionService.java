@@ -12,8 +12,10 @@ import com.minidrive.entity.UploadSession;
 import com.minidrive.entity.UploadSessionStatus;
 import com.minidrive.entity.User;
 import com.minidrive.exception.ForbiddenException;
+import com.minidrive.exception.FolderDeletionInProgressException;
 import com.minidrive.exception.ResourceNotFoundException;
 import com.minidrive.exception.StorageException;
+import com.minidrive.exception.UploadChunkConflictException;
 import com.minidrive.metrics.MeasuredOperation;
 import io.micrometer.core.instrument.MeterRegistry;
 import com.minidrive.mapper.FileMapper;
@@ -98,6 +100,8 @@ public class UploadSessionService {
     private final StorageService storageService;
     private final FileAccessService fileAccessService;
     private final FileService fileService;
+    private final FolderDeletionLifecycle folderDeletionLifecycle;
+    private final CleanupIntentJournal cleanupJournal;
 
     /**
      * Programmatic transaction boundary for the completion phases. Completion
@@ -119,6 +123,8 @@ public class UploadSessionService {
             StorageService storageService,
             FileAccessService fileAccessService,
             FileService fileService,
+            FolderDeletionLifecycle folderDeletionLifecycle,
+            CleanupIntentJournal cleanupJournal,
             PlatformTransactionManager transactionManager,
             MeterRegistry metrics) {
         this.uploadSessionRepository = uploadSessionRepository;
@@ -129,6 +135,8 @@ public class UploadSessionService {
         this.storageService = storageService;
         this.fileAccessService = fileAccessService;
         this.fileService = fileService;
+        this.folderDeletionLifecycle = folderDeletionLifecycle;
+        this.cleanupJournal = cleanupJournal;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.metrics = metrics;
     }
@@ -139,6 +147,7 @@ public class UploadSessionService {
      * computed server-side so clients cannot request an inconsistent split.
      */
     @MeasuredOperation(value = "create", metric = "minidrive_upload_session_operation_seconds")
+    @Transactional
     public UploadSessionResponse createSession(
             Authentication authentication,
             CreateUploadSessionRequest request) {
@@ -147,12 +156,14 @@ public class UploadSessionService {
     }
 
     @MeasuredOperation(value = "create", metric = "minidrive_upload_session_operation_seconds")
+    @Transactional
     public UploadSessionResponse createSession(
             Authentication authentication,
             CreateUploadSessionRequest request,
             String idempotencyKey) {
 
         User owner = currentUser(authentication);
+        userRepository.findByIdForUpdate(owner.getId()).orElseThrow();
 
         String filename = normalizeAndValidateName(request.getFilename());
         String contentType = normalizeAndValidateContentType(request.getContentType());
@@ -163,6 +174,10 @@ public class UploadSessionService {
 
         Folder folder = resolveOwnedFolder(owner, request.getFolderId());
         File targetFile = resolveTargetFile(owner, request.getTargetFileId());
+        if (targetFile != null) {
+            userRepository.findByIdForUpdate(targetFile.getOwner().getId()).orElseThrow();
+            assertFileFolderWritable(targetFile);
+        }
 
         String key = idempotencyKey == null ? null : idempotencyKey.trim();
         if (key != null && (key.isEmpty() || key.length() > 200)) {
@@ -242,12 +257,12 @@ public class UploadSessionService {
      * persisted only afterwards, so a row never references bytes that were not
      * stored. If persistence fails, the just-written object is removed.</p>
      *
-     * <p>This method is intentionally not transactional: the object-storage
-     * write and the database write cannot share a transaction, and keeping the
-     * persistence in its own transaction lets a concurrent same-index insert be
-     * caught and reconciled instead of poisoning an outer transaction.</p>
+     * <p>The transaction keeps the PostgreSQL row lock and the durable staging
+     * key lock alive across storage I/O and metadata persistence. The journal
+     * recovers any object left behind if either side fails independently.</p>
      */
     @MeasuredOperation(value = "chunk", metric = "minidrive_upload_session_operation_seconds")
+    @Transactional
     public ChunkUploadResponse ingestChunk(
             Authentication authentication,
             UUID sessionId,
@@ -255,7 +270,12 @@ public class UploadSessionService {
             InputStream body) {
 
         User owner = currentUser(authentication);
-        UploadSession session = requireOwnedSession(owner, sessionId);
+        userRepository.findByIdForUpdate(owner.getId()).orElseThrow();
+        UploadSession session = uploadSessionRepository.findByIdAndOwnerIdForUpdate(sessionId, owner.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Upload session not found"));
+        if (session.getTargetFile() != null)
+            userRepository.findByIdForUpdate(session.getTargetFile().getOwner().getId()).orElseThrow();
+        assertSessionTargetWritable(session);
 
         if (session.getStatus() != UploadSessionStatus.INITIATED) {
             throw new IllegalArgumentException(
@@ -276,6 +296,18 @@ public class UploadSessionService {
         String checksum = sha256Hex(data);
 
         String stagingKey = stagingObjectKey(owner.getId(), session.getId(), chunkIndex);
+        cleanupJournal.guardUntilTransactionCompletes(stagingKey);
+
+        UploadChunk accepted = uploadChunkRepository
+                .findBySessionIdAndChunkIndex(session.getId(), chunkIndex).orElse(null);
+        if (accepted != null) {
+            if (accepted.getSizeBytes() != data.length || !checksum.equals(accepted.getChecksum())) {
+                throw new UploadChunkConflictException(
+                        "Chunk index " + chunkIndex + " was already uploaded with different content");
+            }
+            event("idempotent_retry", "success");
+            return new ChunkUploadResponse(session.getId(), chunkIndex, accepted.getSizeBytes(), true);
+        }
 
         // The object is written first; the row is only created once it exists.
         storageService.upload(
@@ -299,7 +331,9 @@ public class UploadSessionService {
     public void abort(Authentication authentication, UUID sessionId) {
 
         User owner = currentUser(authentication);
-        UploadSession session = requireOwnedSession(owner, sessionId);
+        userRepository.findByIdForUpdate(owner.getId()).orElseThrow();
+        UploadSession session = uploadSessionRepository.findByIdAndOwnerIdForUpdate(sessionId, owner.getId())
+                .orElseThrow(() -> new ResourceNotFoundException("Upload session not found"));
 
         if (session.getStatus() == UploadSessionStatus.ABORTED) {
             event("idempotent_retry", "success");
@@ -352,9 +386,11 @@ public class UploadSessionService {
      * session returns the recorded file/version instead of creating a new one.</p>
      */
     @MeasuredOperation(value = "complete", metric = "minidrive_upload_session_operation_seconds")
+    @Transactional
     public FileUploadResponse complete(Authentication authentication, UUID sessionId) {
 
         User caller = currentUser(authentication);
+        userRepository.findByIdForUpdate(caller.getId()).orElseThrow();
         UUID callerId = caller.getId();
 
         // Plan under a read transaction so the session's lazy associations
@@ -369,7 +405,17 @@ public class UploadSessionService {
             return plan.completedResponse();
         }
 
+        if (plan.replacement()) {
+            File target = fileRepository.findById(plan.targetFileId())
+                    .orElseThrow(() -> new ResourceNotFoundException("File not found"));
+            userRepository.findByIdForUpdate(target.getOwner().getId()).orElseThrow();
+            assertFileFolderWritable(target);
+        }
+        if (plan.folderId() != null)
+            assertFolderWritable(folderRepository.findById(plan.folderId()).orElseThrow());
+
         String objectKey = plan.newObjectKey();
+        cleanupJournal.guardUntilTransactionCompletes(objectKey);
 
         // Assemble and store the final object before any metadata is written. If
         // this fails there is nothing durable to compensate: the session stays
@@ -681,9 +727,11 @@ public class UploadSessionService {
 
         try {
             storageService.delete(objectKey);
+            cleanupJournal.resolve(objectKey);
         } catch (RuntimeException cleanupFailure) {
             log.error("Failed to clean up final object {} after completion failure",
                     objectKey, cleanupFailure);
+            scheduleCleanup(objectKey, cleanupFailure);
             if (cause != null) {
                 cause.addSuppressed(cleanupFailure);
             }
@@ -707,6 +755,7 @@ public class UploadSessionService {
                 log.warn("Failed to remove staging object {} after successful completion;"
                         + " the completed file is unaffected",
                         chunk.getStagingObjectKey(), cleanupFailure);
+                scheduleCleanup(chunk.getStagingObjectKey(), cleanupFailure);
             }
         }
 
@@ -764,12 +813,10 @@ public class UploadSessionService {
     }
 
     /**
-     * Persists one chunk row, treating a same-index retry as an idempotent
-     * success. A concurrent insert is detected through the unique
-     * {@code (session_id, chunk_index)} constraint; in that case the row that
-     * won the race is kept and no cleanup is performed because the staging key
-     * is shared and deterministic. Any other persistence failure removes the
-     * freshly written object before rethrowing.
+     * Persists a first-write chunk row. The caller already holds the session
+     * row lock and the shared staging-key lock, and has handled accepted retries
+     * before storage is touched. Persistence failures compensate the staged
+     * object and leave the cleanup journal available if compensation fails.
      */
     private ChunkUploadResponse persistChunk(
             UploadSession session,
@@ -778,26 +825,13 @@ public class UploadSessionService {
             String checksum,
             String stagingKey) {
 
-        if (uploadChunkRepository
-                .findBySessionIdAndChunkIndex(session.getId(), chunkIndex)
-                .isPresent()) {
-            return new ChunkUploadResponse(session.getId(), chunkIndex, sizeBytes, true);
-        }
-
         try {
             uploadChunkRepository.saveAndFlush(
                     new UploadChunk(session, chunkIndex, sizeBytes, checksum, stagingKey));
             return new ChunkUploadResponse(session.getId(), chunkIndex, sizeBytes, false);
         } catch (DataIntegrityViolationException constraintFailure) {
-            // The unique (session_id, chunk_index) constraint is the arbiter of
-            // a concurrent same-index race: if a row now exists, another writer
-            // won and shares our deterministic staging key, so this is a
-            // successful duplicate rather than a failure.
-            if (uploadChunkRepository
-                    .findBySessionIdAndChunkIndex(session.getId(), chunkIndex)
-                    .isPresent()) {
-                return new ChunkUploadResponse(session.getId(), chunkIndex, sizeBytes, true);
-            }
+            // A uniqueness failure is not treated as evidence of a safe
+            // duplicate. Writers must observe an accepted row before storage.
             removeStagingObject(stagingKey, constraintFailure);
             throw constraintFailure;
         } catch (RuntimeException databaseFailure) {
@@ -811,12 +845,24 @@ public class UploadSessionService {
 
         try {
             storageService.delete(stagingKey);
+            cleanupJournal.resolve(stagingKey);
             event("staging_cleanup", "success");
         } catch (RuntimeException cleanupFailure) {
             event("staging_cleanup", "failure");
             log.error("Failed to clean up staging object {} after chunk persistence failure",
                     stagingKey, cleanupFailure);
+            scheduleCleanup(stagingKey, cleanupFailure);
             cause.addSuppressed(cleanupFailure);
+        }
+    }
+
+    private void scheduleCleanup(String objectKey, RuntimeException cleanupFailure) {
+        try {
+            folderDeletionLifecycle.scheduleObjectCleanup(objectKey);
+        } catch (RuntimeException persistenceFailure) {
+            log.error("Unable to persist retry work for staging object {}; reconciliation is required",
+                    objectKey, persistenceFailure);
+            cleanupFailure.addSuppressed(persistenceFailure);
         }
     }
 
@@ -942,7 +988,23 @@ public class UploadSessionService {
             throw new ForbiddenException("You do not have access to this folder");
         }
 
+        assertFolderWritable(folder);
+
         return folder;
+    }
+
+    private void assertFolderWritable(Folder folder) {
+        if (folder != null && folderRepository.hasDeletingAncestor(folder.getId()))
+            throw new FolderDeletionInProgressException();
+    }
+
+    private void assertFileFolderWritable(File file) {
+        if (file.getFolder() != null) assertFolderWritable(file.getFolder());
+    }
+
+    private void assertSessionTargetWritable(UploadSession session) {
+        if (session.getFolder() != null) assertFolderWritable(session.getFolder());
+        if (session.getTargetFile() != null) assertFileFolderWritable(session.getTargetFile());
     }
 
     /**

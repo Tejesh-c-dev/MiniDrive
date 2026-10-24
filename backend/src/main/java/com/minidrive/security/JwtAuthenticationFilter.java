@@ -1,5 +1,7 @@
 package com.minidrive.security;
 
+import com.minidrive.service.TokenRevocationService;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -20,12 +22,15 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtService jwtService;
     private final CustomUserDetailsService userDetailsService;
+    private final TokenRevocationService tokenRevocationService;
 
     public JwtAuthenticationFilter(
             JwtService jwtService,
-            CustomUserDetailsService userDetailsService) {
+            CustomUserDetailsService userDetailsService,
+            TokenRevocationService tokenRevocationService) {
         this.jwtService = jwtService;
         this.userDetailsService = userDetailsService;
+        this.tokenRevocationService = tokenRevocationService;
     }
 
     @Override
@@ -55,13 +60,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         try {
 
-            String email = jwtService.extractUsername(token);
+            JwtService.ValidatedToken validated = jwtService.parseValidatedToken(token);
+            String email = validated.subject();
 
+            boolean revoked = tokenRevocationService.isRevoked(validated.tokenId());
+            if (revoked) {
+                SecurityContextHolder.clearContext();
+            }
             if (email != null
+                    && !revoked
                     && SecurityContextHolder
                             .getContext()
-                            .getAuthentication() == null
-                    && jwtService.isTokenValid(token)) {
+                            .getAuthentication() == null) {
 
                 UserDetails userDetails = userDetailsService.loadUserByUsername(email);
 
@@ -80,7 +90,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
 
         } catch (Exception ignored) {
-            // Invalid token -> remain unauthenticated
+            // Invalid token or unavailable revocation persistence -> remain
+            // unauthenticated. Protected endpoints therefore fail closed.
+            SecurityContextHolder.clearContext();
         }
 
         filterChain.doFilter(request, response);

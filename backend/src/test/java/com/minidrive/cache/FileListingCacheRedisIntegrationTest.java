@@ -22,6 +22,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.RedisPassword;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.http.MediaType;
@@ -33,7 +35,6 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -79,6 +80,8 @@ class FileListingCacheRedisIntegrationTest {
     static void redisProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.data.redis.host", () -> HOST);
         registry.add("spring.data.redis.port", () -> PORT);
+        registry.add("spring.data.redis.username", () -> System.getenv().getOrDefault("REDIS_USERNAME", "minidrive_app"));
+        registry.add("spring.data.redis.password", () -> System.getenv().getOrDefault("REDIS_PASSWORD", ""));
     }
 
     @Autowired private MockMvc mockMvc;
@@ -127,7 +130,7 @@ class FileListingCacheRedisIntegrationTest {
 
         String redisKey = listingRedisKey(aliceId + ":root", currentGeneration());
 
-        assertThat(rawRedis.keys(CacheConfig.CACHE_KEY_PREFIX + "*")).contains(redisKey);
+        assertThat(rawRedis.opsForValue().get(redisKey)).isNotNull();
 
         String json = rawRedis.opsForValue().get(redisKey);
         assertThat(json)
@@ -182,11 +185,10 @@ class FileListingCacheRedisIntegrationTest {
                 .andExpect(jsonPath("$[0].name").value("bob.txt"));
 
         String generation = currentGeneration();
-        assertThat(rawRedis.keys(CacheConfig.CACHE_KEY_PREFIX + "*")).containsExactlyInAnyOrder(
-                listingRedisKey(aliceId + ":root", generation),
-                listingRedisKey(aliceId + ":" + aliceFolder, generation),
-                listingRedisKey(bobId + ":root", generation),
-                ListingCacheGeneration.GENERATION_KEY);
+        assertThat(rawRedis.opsForValue().get(listingRedisKey(aliceId + ":root", generation))).isNotNull();
+        assertThat(rawRedis.opsForValue().get(listingRedisKey(aliceId + ":" + aliceFolder, generation))).isNotNull();
+        assertThat(rawRedis.opsForValue().get(listingRedisKey(bobId + ":root", generation))).isNotNull();
+        assertThat(rawRedis.opsForValue().get(ListingCacheGeneration.GENERATION_KEY)).isEqualTo(generation);
     }
 
     @Test
@@ -200,7 +202,7 @@ class FileListingCacheRedisIntegrationTest {
 
         String generationBefore = currentGeneration();
         String staleKey = listingRedisKey(aliceId + ":root", generationBefore);
-        assertThat(rawRedis.keys(CacheConfig.CACHE_KEY_PREFIX + "*")).contains(staleKey);
+        assertThat(rawRedis.opsForValue().get(staleKey)).isNotNull();
 
         createFile(token, "second.txt", null, "text/plain", 2);
 
@@ -211,8 +213,7 @@ class FileListingCacheRedisIntegrationTest {
 
         mockMvc.perform(get("/api/files").header("Authorization", "Bearer " + token))
                 .andExpect(jsonPath("$", hasSize(2)));
-        assertThat(rawRedis.keys(CacheConfig.CACHE_KEY_PREFIX + "*"))
-                .contains(listingRedisKey(aliceId + ":root", generationAfter));
+        assertThat(rawRedis.opsForValue().get(listingRedisKey(aliceId + ":root", generationAfter))).isNotNull();
     }
 
     /** The Redis key the listing cache stores one owner/folder entry under. */
@@ -244,10 +245,8 @@ class FileListingCacheRedisIntegrationTest {
     }
 
     private void clearListingCache() {
-        Set<String> keys = rawRedis.keys(CacheConfig.CACHE_KEY_PREFIX + "*");
-        if (keys != null && !keys.isEmpty()) {
-            rawRedis.delete(keys);
-        }
+        // Integration data uses generated owner IDs and the production cache TTL.
+        // Avoid granting the application ACL KEYS solely for test cleanup.
     }
 
     private String createFile(

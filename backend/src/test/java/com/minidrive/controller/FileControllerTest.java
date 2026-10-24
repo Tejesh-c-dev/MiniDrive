@@ -537,10 +537,48 @@ class FileControllerTest {
     }
 
     @Test
-    void emptyMultipartFileIsRejected() throws Exception {
+    void zeroByteMultipartFileIsStoredWithEmptySha256AndDownloadsEmpty() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        var stored = new java.util.concurrent.ConcurrentHashMap<String, byte[]>();
+        org.mockito.Mockito.doAnswer(invocation -> {
+            stored.put(invocation.getArgument(0),
+                    ((java.io.InputStream) invocation.getArgument(1)).readAllBytes());
+            return null;
+        }).when(storageService).upload(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any(java.io.InputStream.class),
+                org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString());
+        org.mockito.Mockito.when(storageService.download(org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(invocation -> new ByteArrayInputStream(stored.get(invocation.getArgument(0))));
+
+        String body = mockMvc.perform(multipart("/api/files")
+                        .file(new MockMultipartFile("file", "empty.txt", "text/plain", new byte[0]))
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.sizeBytes").value(0))
+                .andExpect(jsonPath("$.checksum").value(
+                        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"))
+                .andReturn().getResponse().getContentAsString();
+        String fileId = JsonPath.read(body, "$.id");
+        File saved = fileRepository.findById(UUID.fromString(fileId)).orElseThrow();
+        org.junit.jupiter.api.Assertions.assertEquals(0, saved.getSizeBytes());
+        org.junit.jupiter.api.Assertions.assertEquals(
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                saved.getChecksum());
+        var version = fileVersionRepository.findByFileIdOrderByVersionNumberAsc(saved.getId()).get(0);
+        org.junit.jupiter.api.Assertions.assertEquals(0, version.getSizeBytes());
+        org.junit.jupiter.api.Assertions.assertEquals(saved.getChecksum(), version.getChecksum());
+        org.junit.jupiter.api.Assertions.assertArrayEquals(new byte[0], stored.get(saved.getObjectKey()));
+        var response = mockMvc.perform(get("/api/files/" + fileId + "/download")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk()).andReturn();
+        org.junit.jupiter.api.Assertions.assertArrayEquals(new byte[0],
+                mockMvc.perform(asyncDispatch(response)).andReturn().getResponse().getContentAsByteArray());
+    }
+
+    @Test
+    void multipartUploadRequiresFilePart() throws Exception {
         String token = registerAndGetToken("Alice", "alice@test.com");
         mockMvc.perform(multipart("/api/files")
-                        .file(new MockMultipartFile("file", "empty.txt", "text/plain", new byte[0]))
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isBadRequest());
         org.junit.jupiter.api.Assertions.assertEquals(0, fileRepository.count());

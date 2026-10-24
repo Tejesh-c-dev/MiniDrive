@@ -13,9 +13,28 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.HashMap;
 import java.util.Map;
+import com.minidrive.security.RateLimitExceededException;
+import com.minidrive.security.RateLimitUnavailableException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<?> handleRateLimited(RateLimitExceededException ex) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", Integer.toString(ex.getRetryAfter()))
+                .body(Map.of("error", "Too many requests"));
+    }
+
+    @ExceptionHandler(RateLimitUnavailableException.class)
+    public ResponseEntity<?> handleRateLimitUnavailable(RateLimitUnavailableException ex) {
+        log.warn("Rate-limit store unavailable; rejecting protected request");
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("error", "Service temporarily unavailable"));
+    }
 
     @ExceptionHandler({OptimisticLockingFailureException.class, PessimisticLockingFailureException.class})
     public ResponseEntity<?> handleConcurrencyConflict(RuntimeException ex) {
@@ -76,6 +95,17 @@ public class GlobalExceptionHandler {
     public ResponseEntity<?> handleStorage(StorageException ex) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(Map.of("error", "File storage operation failed"));
+    }
+
+    @ExceptionHandler(SpoolRejectedException.class)
+    public ResponseEntity<?> handleSpoolRejected(SpoolRejectedException ex) {
+        if (ex.getReason() == SpoolRejectedException.Reason.TOO_LARGE) {
+            return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                    .body(Map.of("error", "Upload exceeds the configured replication spool size limit"));
+        }
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header("Retry-After", "5")
+                .body(Map.of("error", "Replication upload capacity is temporarily unavailable"));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

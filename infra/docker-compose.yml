@@ -1,3 +1,6 @@
+# Local development infrastructure only. This file has development credentials,
+# loopback host port publications, and no backend, frontend, TLS ingress, or
+# production persistence/monitoring policy. Do not use it as a production stack.
 services:
 
   postgres:
@@ -30,6 +33,9 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # This local-only Silo endpoint is scraped from the host over the
+      # loopback-published API port. Do not carry this setting into production.
+      MINIO_PROMETHEUS_AUTH_TYPE: public
 
     ports:
       - "127.0.0.1:9000:9000"
@@ -52,6 +58,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_SECONDARY_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_SECONDARY_ROOT_PASSWORD:-minioadmin}
+      MINIO_PROMETHEUS_AUTH_TYPE: public
     ports:
       - "127.0.0.1:9100:9000"
       - "127.0.0.1:9101:9001"
@@ -74,25 +81,65 @@ services:
     image: redis:8.2.10-bookworm
     container_name: minidrive-redis
 
+    entrypoint: ["/bin/sh", "-ec"]
     command:
-      - redis-server
-      - --save
-      - ""
-      - --appendonly
-      - "no"
-      - --maxmemory
-      - 256mb
-      - --maxmemory-policy
-      - allkeys-lru
+      - |
+        : "$${REDIS_PASSWORD:?REDIS_PASSWORD is required}" "$${REDIS_EXPORTER_PASSWORD:?REDIS_EXPORTER_PASSWORD is required}"
+        : "$${REDIS_USERNAME:?REDIS_USERNAME is required}" "$${REDIS_EXPORTER_USERNAME:?REDIS_EXPORTER_USERNAME is required}"
+        case "$$REDIS_PASSWORD$$REDIS_EXPORTER_PASSWORD" in *[!A-Za-z0-9_-]*) echo 'Redis passwords must use only letters, digits, underscore, or hyphen.' >&2; exit 1;; esac
+        case "$$REDIS_USERNAME$$REDIS_EXPORTER_USERNAME" in *[!A-Za-z0-9_-]*) echo 'Redis usernames must use only letters, digits, underscore, or hyphen.' >&2; exit 1;; esac
+        test "$$REDIS_USERNAME" != "$$REDIS_EXPORTER_USERNAME" || { echo 'Redis application and exporter usernames must differ.' >&2; exit 1; }
+        umask 077
+        printf 'user default off\nuser %s on >%s ~* &* -@all +@read +@write -@admin -@dangerous +eval +evalsha +hello +ping +client|setinfo\nuser %s on >%s ~* &* -@all +@connection +memory +strlen +config|get +xinfo +pfcount +zcard +type +xlen +scard +llen +hlen +get +eval +slowlog +cluster|info +cluster|slots +cluster|nodes +info +latency +scan -reset -auth -asking\n' "$$REDIS_USERNAME" "$$REDIS_PASSWORD" "$$REDIS_EXPORTER_USERNAME" "$$REDIS_EXPORTER_PASSWORD" > /tmp/users.acl
+        exec redis-server --save '' --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru --aclfile /tmp/users.acl
+
+    environment:
+      REDIS_USERNAME: ${REDIS_USERNAME:?Set REDIS_USERNAME in .env}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      REDIS_EXPORTER_USERNAME: ${REDIS_EXPORTER_USERNAME:?Set REDIS_EXPORTER_USERNAME in .env}
+      REDIS_EXPORTER_PASSWORD: ${REDIS_EXPORTER_PASSWORD:?Set REDIS_EXPORTER_PASSWORD in .env}
 
     ports:
       - "127.0.0.1:56379:6379"
 
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli --user \"$$REDIS_USERNAME\" --pass \"$$REDIS_PASSWORD\" ping 2>/dev/null | grep -q PONG"]
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # Optional local monitoring exporters. They publish only on host loopback;
+  # Prometheus runs on the host to satisfy the backend's loopback-only Actuator
+  # policy. The PostgreSQL exporter uses a separate, least-privilege role.
+  postgres-exporter:
+    profiles: [monitoring]
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.18.1
+    container_name: minidrive-postgres-exporter
+    environment:
+      DATA_SOURCE_URI: postgres:5432/${POSTGRES_DB:-minidrive}?sslmode=disable
+      DATA_SOURCE_USER: minidrive_exporter
+      DATA_SOURCE_PASS: ${POSTGRES_EXPORTER_PASSWORD:-}
+    ports:
+      - "127.0.0.1:19187:9187"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis-exporter:
+    profiles: [monitoring]
+    image: ghcr.io/oliver006/redis_exporter:v1.93.0
+    container_name: minidrive-redis-exporter
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      REDIS_USER: ${REDIS_EXPORTER_USERNAME:?Set REDIS_EXPORTER_USERNAME in .env}
+      REDIS_PASSWORD: ${REDIS_EXPORTER_PASSWORD:?Set REDIS_EXPORTER_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:19121:9121"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
 
   # One-shot bootstrap: waits for MinIO, then creates the private bucket.
   # Idempotent - re-running `docker compose up` never fails on an existing bucket.

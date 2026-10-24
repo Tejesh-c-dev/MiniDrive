@@ -8,4 +8,4 @@ providers:
     disableDeletion: true
     editable: false
     options:
-      path: C:/MiniDrive/infra/grafana/dashboards
+      path: ${MINIDRIVE_GRAFANA_DASHBOARDS}

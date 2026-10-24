@@ -43,9 +43,9 @@ import static org.mockito.Mockito.doAnswer;
 
 /** Opt-in end-to-end check using a real PostgreSQL database and Silo/MinIO bucket. */
 @SpringBootTest(properties = {
-        "spring.datasource.url=${DB_URL:jdbc:postgresql://127.0.0.1:55432/minidrive}",
-        "spring.datasource.username=${DB_USERNAME:minidrive}",
-        "spring.datasource.password=${DB_PASSWORD:minidrive}",
+        "spring.datasource.url=${DB_URL}",
+        "spring.datasource.username=${DB_USERNAME}",
+        "spring.datasource.password=${DB_PASSWORD}",
         "spring.datasource.driver-class-name=org.postgresql.Driver",
         "spring.flyway.enabled=true",
         "spring.flyway.baseline-on-migrate=true",
@@ -77,8 +77,8 @@ class DatabaseOutageCleanupRealInfrastructureTest {
     private String testOrphanKey;
     private long fileCountBeforeTestData;
 
-    private static final String POSTGRES_CONTAINER = "minidrive-postgres";
-    private static final String POSTGRES_JDBC = "jdbc:postgresql://127.0.0.1:55432/minidrive";
+    private static final String POSTGRES_JDBC = "jdbc:postgresql://127.0.0.1:55439/minidrive_it";
+    private static final int POSTGRES_PORT = 55439;
     private static final Duration CONTAINER_TIMEOUT = Duration.ofSeconds(90);
 
     @DynamicPropertySource
@@ -91,9 +91,12 @@ class DatabaseOutageCleanupRealInfrastructureTest {
 
     @BeforeEach void prepare() {
         assertEquals("true", System.getenv("MINIDRIVE_ALLOW_POSTGRES_CONTAINER_STOP"),
-                "Set MINIDRIVE_ALLOW_POSTGRES_CONTAINER_STOP=true to permit stopping the verified local test container");
-        assertEquals(POSTGRES_JDBC, System.getenv().getOrDefault("DB_URL", POSTGRES_JDBC),
-                "The outage test may only use its fixed loopback PostgreSQL endpoint");
+                "Set the explicit destructive-test opt-in only for the disposable integration project");
+        assertEquals(POSTGRES_JDBC, System.getenv("DB_URL"), "Outage injection is restricted to the isolated integration database");
+        assertEquals("md_it", System.getenv("DB_USERNAME"));
+        assertNotEquals("minidrive", System.getenv("DB_PASSWORD"));
+        assertTrue(System.getenv("MINIO_ENDPOINT").contains(":9200"));
+        assertTrue(System.getenv("MINIO_BUCKET").startsWith("minidrive-it-"));
         postgresBefore = inspectPostgresContainer();
         assertTrue(postgresBefore.running(), "The verified local PostgreSQL container must be running before the test");
         postgresId = postgresBefore.id();
@@ -230,7 +233,10 @@ class DatabaseOutageCleanupRealInfrastructureTest {
     }
 
     private ContainerSnapshot inspectPostgresContainer() {
-        String json = runDocker("inspect", "--format", "{{json .}}", POSTGRES_CONTAINER);
+        String container = System.getenv("MINIDRIVE_IT_POSTGRES_CONTAINER");
+        if (container == null || !container.matches("[0-9a-f]{12,64}"))
+            throw new IllegalStateException("Set MINIDRIVE_IT_POSTGRES_CONTAINER to the inspected disposable container ID");
+        String json = runDocker("inspect", "--format", "{{json .}}", container);
         try {
             JsonNode root = new ObjectMapper().readTree(json);
             String id = root.path("Id").asText();
@@ -238,18 +244,17 @@ class DatabaseOutageCleanupRealInfrastructureTest {
             JsonNode config = root.path("Config");
             JsonNode labels = config.path("Labels");
             JsonNode port = root.path("HostConfig").path("PortBindings").path("5432/tcp").path(0);
-            boolean intended = name.equals("/" + POSTGRES_CONTAINER)
+            boolean intended = name.startsWith("/md-it-")
                     && config.path("Image").asText().equals("postgres:16")
                     && labels.path("com.docker.compose.service").asText().equals("postgres")
-                    && labels.path("com.docker.compose.project").asText().equals("infra")
-                    && config.path("Env").toString().contains("POSTGRES_USER=minidrive")
-                    && config.path("Env").toString().contains("POSTGRES_DB=minidrive")
-                    && Path.of(labels.path("com.docker.compose.project.config_files").asText())
-                            .toAbsolutePath().normalize().equals(expectedComposeFile())
+                    && labels.path("com.docker.compose.project").asText().matches("md-it-[0-9a-f]{12}")
+                    && labels.path("com.docker.compose.service").asText().equals("postgres")
+                    && config.path("Env").toString().contains("POSTGRES_USER=md_it")
+                    && config.path("Env").toString().contains("POSTGRES_DB=minidrive_it")
                     && port.path("HostIp").asText().equals("127.0.0.1")
-                    && port.path("HostPort").asText().equals("55432")
-                    && root.path("HostConfig").path("Binds").toString().contains("postgres_data:/var/lib/postgresql/data");
-            if (id.isBlank() || !intended)
+                    && port.path("HostPort").asText().equals(Integer.toString(POSTGRES_PORT))
+                    && root.path("Mounts").toString().contains("live_pg_data");
+            if (id.isBlank() || !id.startsWith(container) || !intended)
                 throw new IllegalStateException("Refusing to control a container not positively identified as this repository's local test PostgreSQL");
             return new ContainerSnapshot(id, root.path("State").path("Running").asBoolean());
         } catch (Exception failure) {
@@ -280,13 +285,13 @@ class DatabaseOutageCleanupRealInfrastructureTest {
         Instant deadline = Instant.now().plus(CONTAINER_TIMEOUT);
         while (Instant.now().isBefore(deadline)) {
             try {
-                String readiness = runDocker("exec", postgresId, "pg_isready", "-U", "minidrive", "-d", "minidrive");
+                String readiness = runDocker("exec", postgresId, "pg_isready", "-U", "md_it", "-d", "minidrive_it");
                 if (readiness.contains("accepting connections")) return;
             } catch (RuntimeException notReadyYet) {
                 // pg_isready exits nonzero until PostgreSQL can accept protocol connections.
             }
             try (Socket socket = new Socket()) {
-                socket.connect(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 55432), 500);
+                socket.connect(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), POSTGRES_PORT), 500);
                 // Require PostgreSQL's own readiness response, not just an open TCP port.
             } catch (Exception unavailable) {
                 pauseBriefly();
@@ -300,7 +305,7 @@ class DatabaseOutageCleanupRealInfrastructureTest {
 
     private void assertPostgresNotAcceptingConnections() {
         try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress("127.0.0.1", 55432), 500);
+            socket.connect(new InetSocketAddress("127.0.0.1", POSTGRES_PORT), 500);
             fail("PostgreSQL still accepted TCP connections after its container was stopped");
         } catch (java.net.ConnectException expected) { /* Connection refusal confirms outage. */ }
         catch (java.io.IOException expected) { /* Any socket I/O failure confirms no accepting listener. */ }

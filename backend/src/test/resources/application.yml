@@ -1,4 +1,12 @@
 spring:
+  profiles:
+    default: test
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:56379}
+      username: ${REDIS_USERNAME:}
+      password: ${REDIS_PASSWORD:}
   datasource:
     url: jdbc:h2:mem:minidrive;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
     driver-class-name: org.h2.Driver
@@ -17,6 +25,13 @@ jwt:
   expiration: 86400000
 
 minidrive:
+  cors:
+    allowed-origins: http://localhost:5173,http://127.0.0.1:5173
+  rate-limit:
+    # Functional controller suites share no rate-limit scenarios; the dedicated
+    # RateLimitControllerIntegrationTest overrides this with its asserted low cap.
+    registration:
+      limit: 1000
   cleanup-journal:
     directory: target/test-cleanup-journal
     retry-delay-ms: 3600000

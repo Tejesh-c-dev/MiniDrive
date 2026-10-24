@@ -7,6 +7,7 @@ import com.minidrive.entity.User;
 import com.minidrive.repository.UserRepository;
 import com.minidrive.security.JwtService;
 
+import org.springframework.security.core.Authentication;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -21,16 +22,19 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
+    private final TokenRevocationService tokenRevocationService;
 
     public AuthService(
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
             AuthenticationManager authenticationManager,
-            JwtService jwtService) {
+            JwtService jwtService,
+            TokenRevocationService tokenRevocationService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.authenticationManager = authenticationManager;
         this.jwtService = jwtService;
+        this.tokenRevocationService = tokenRevocationService;
     }
 
     @Transactional
@@ -78,6 +82,19 @@ public class AuthService {
                 user.getId().toString(),
                 user.getName(),
                 user.getEmail());
+    }
+
+    /** Revokes only the currently authenticated bearer token. */
+    @Transactional
+    public void logout(String authorizationHeader, Authentication authentication) {
+        if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
+            throw new IllegalArgumentException("Bearer token is required");
+        }
+        JwtService.ValidatedToken token = jwtService.parseValidatedToken(authorizationHeader.substring(7));
+        if (!token.subject().equals(authentication.getName())) {
+            throw new IllegalArgumentException("Bearer token does not match authenticated user");
+        }
+        tokenRevocationService.revoke(token);
     }
 
     private String normalizeEmail(String email) {

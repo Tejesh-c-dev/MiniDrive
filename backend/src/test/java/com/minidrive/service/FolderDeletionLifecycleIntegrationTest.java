@@ -35,6 +35,7 @@ class FolderDeletionLifecycleIntegrationTest {
     @Autowired private FolderService folderService;
     @Autowired private FileService fileService;
     @Autowired private FolderDeletionLifecycle lifecycle;
+    @Autowired private HistoricalObjectOrphanReport orphanReport;
     @Autowired private CleanupIntentJournal cleanupJournal;
     @Autowired private UserRepository users;
     @Autowired private FolderRepository folders;
@@ -58,6 +59,12 @@ class FolderDeletionLifecycleIntegrationTest {
         jdbc.execute("DROP TABLE IF EXISTS folder_delete_guard");
         jdbc.execute("DROP TABLE IF EXISTS file_delete_guard");
         jdbc.execute("DROP TABLE IF EXISTS file_delete_finalize_guard");
+        jdbc.execute("CREATE TABLE IF NOT EXISTS object_locations (object_key VARCHAR(512) PRIMARY KEY, storage_node_id VARCHAR(64) NOT NULL, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)");
+        jdbc.update("DELETE FROM object_locations");
+        // Flyway is disabled for this H2 suite; provide the replica metadata
+        // table used by report-only reconciliation queries.
+        jdbc.execute("CREATE TABLE IF NOT EXISTS object_replicas (object_key VARCHAR(512), storage_node_id VARCHAR(64), status VARCHAR(20), updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(object_key, storage_node_id))");
+        jdbc.update("DELETE FROM object_replicas");
         jdbc.execute("ALTER TABLE file_versions DROP CONSTRAINT IF EXISTS ck_test_upload_version_failure");
         objects.deleteAll(); jobs.deleteAll();
         chunks.deleteAll(); sessions.deleteAll(); versions.deleteAll(); files.deleteAll(); folders.deleteAll(); users.deleteAll();
@@ -69,6 +76,7 @@ class FolderDeletionLifecycleIntegrationTest {
             if (bucket.remove(key) == null) return null; // Silo remove is idempotent for missing keys.
             return null;
         }).when(storage).delete(anyString());
+        when(storage.exists(anyString())).thenReturn(Optional.of(true));
         owner = users.saveAndFlush(new User("Owner", "deletion@test.local", "hash"));
         auth = new UsernamePasswordAuthenticationToken(owner.getEmail(), "");
     }
@@ -295,7 +303,7 @@ class FolderDeletionLifecycleIntegrationTest {
         verify(storage, never()).delete("committed-history");
     }
 
-    @Test void fileDeleteCommitsManifestBeforeStorageAndRetainsHistoricalObjects() {
+    @Test void fileDeleteCommitsCompleteManifestAndCollectsHistory() {
         File file = storedFile(null, "file-current", "file-current", "file-history");
         bucket.put("file-current", new byte[]{1});
         bucket.put("file-history", new byte[]{2});
@@ -305,8 +313,101 @@ class FolderDeletionLifecycleIntegrationTest {
         assertFalse(files.existsById(file.getId()));
         assertEquals(0, versions.count());
         assertFalse(bucket.containsKey("file-current"));
-        assertTrue(bucket.containsKey("file-history"), "historical objects remain retained by policy");
+        assertFalse(bucket.containsKey("file-history"), "permanent deletion retires the file's version history");
         assertEquals(0, jobs.count());
+    }
+
+    @Test void fileDeletePreservesTargetUploadChunkKeysBeforeCascades() {
+        File file = storedFile(null, "delete-current", "delete-current", "delete-history");
+        UploadSession session = sessions.saveAndFlush(new UploadSession(owner, null, file, "replacement.bin",
+                "application/octet-stream", 1, 5, 1, UploadSessionStatus.INITIATED,
+                LocalDateTime.now().plusHours(2)));
+        chunks.saveAndFlush(new UploadChunk(session, 0, 1, "a", "_uploads/owner/target-session/0"));
+        bucket.put("delete-current", new byte[]{1});
+        bucket.put("delete-history", new byte[]{2});
+        bucket.put("_uploads/owner/target-session/0", new byte[]{3});
+
+        fileService.delete(auth, file.getId());
+
+        assertFalse(files.existsById(file.getId()));
+        assertFalse(sessions.existsById(session.getId()));
+        assertTrue(bucket.isEmpty());
+        verify(storage).delete("delete-current");
+        verify(storage).delete("delete-history");
+        verify(storage).delete("_uploads/owner/target-session/0");
+    }
+
+    @Test void orphanReportIsBoundedByRegisteredAgeAndNeverDeletesStorage() {
+        File live = storedFile(null, "live-route-current", "live-route-current", "live-route-history");
+        UploadSession active = sessions.saveAndFlush(new UploadSession(owner, null, null, "active.bin",
+                "application/octet-stream", 1, 5, 1, UploadSessionStatus.INITIATED, LocalDateTime.now().plusHours(2)));
+        String stagingKey = "_uploads/" + owner.getId() + "/" + active.getId() + "/0";
+        chunks.saveAndFlush(new UploadChunk(active, 0, 1, "etag", stagingKey));
+        String orphanKey = owner.getId() + "/" + UUID.randomUUID() + "-orphan.txt";
+        String liveKey = live.getObjectKey();
+        jdbc.update("insert into object_locations(object_key,storage_node_id,created_at) values (?, 'primary', ?)",
+                orphanKey, java.sql.Timestamp.valueOf(LocalDateTime.now().minusDays(31)));
+        jdbc.update("insert into object_locations(object_key,storage_node_id,created_at) values (?, 'primary', ?)",
+                liveKey, java.sql.Timestamp.valueOf(LocalDateTime.now().minusDays(31)));
+        jdbc.update("insert into object_locations(object_key,storage_node_id,created_at) values (?, 'primary', ?)",
+                "live-route-history", java.sql.Timestamp.valueOf(LocalDateTime.now().minusDays(31)));
+        jdbc.update("insert into object_locations(object_key,storage_node_id,created_at) values (?, 'primary', ?)",
+                stagingKey, java.sql.Timestamp.valueOf(LocalDateTime.now().minusDays(31)));
+
+        assertEquals(1, orphanReport.reportBatch());
+        assertEquals(1, orphanReport.reportBatch(), "repeated reports should return the same evidence without mutation");
+        verify(storage, never()).delete(orphanKey);
+        verify(storage, never()).delete(liveKey);
+        verify(storage, never()).delete("live-route-history");
+        verify(storage, never()).delete(stagingKey);
+        jdbc.update("delete from object_locations where object_key in (?,?,?,?)", orphanKey, liveKey,
+                "live-route-history", stagingKey);
+    }
+
+    @Test void liveReferenceMissingAtStorageIsReportedButUnavailableNodeIsInspectionFailure() {
+        File file = storedFile(null, "missing-live-object", "missing-live-object");
+        String key = file.getObjectKey();
+        jdbc.update("insert into object_locations(object_key,storage_node_id) values (?, 'primary')", key);
+        when(storage.exists(key)).thenReturn(Optional.of(false));
+
+        var missing = orphanReport.reconcileBatch();
+        assertTrue(missing.findings().stream().anyMatch(f -> f.status()
+                == HistoricalObjectOrphanReport.Status.MISSING_OBJECT && key.equals(f.reference())));
+        verify(storage, never()).delete(key);
+
+        when(storage.exists(key)).thenThrow(new IllegalStateException("storage node unavailable"));
+        var unavailable = orphanReport.reconcileBatch();
+        assertTrue(unavailable.findings().stream().anyMatch(f -> f.status()
+                == HistoricalObjectOrphanReport.Status.INSPECTION_FAILED && key.equals(f.reference())));
+        verify(storage, never()).delete(key);
+
+        doReturn(Optional.empty()).when(storage).exists(key);
+        var unsupported = orphanReport.reconcileBatch();
+        assertTrue(unsupported.findings().stream().anyMatch(f -> f.status()
+                == HistoricalObjectOrphanReport.Status.INSPECTION_FAILED && key.equals(f.reference())));
+        assertEquals(0, unsupported.count(HistoricalObjectOrphanReport.Status.UNREFERENCED_REGISTERED_OBJECT));
+        verify(storage, never()).delete(key);
+
+        jdbc.execute("DROP TABLE object_locations");
+        var databaseUnavailable = orphanReport.reconcileBatch();
+        assertTrue(databaseUnavailable.findings().stream().anyMatch(f -> f.status()
+                == HistoricalObjectOrphanReport.Status.INSPECTION_FAILED));
+        verify(storage, never()).delete(key);
+    }
+
+    @Test void reconciliationSurfacesMalformedJournalEntryWithoutRepairingOrDeletingIt() throws Exception {
+        java.nio.file.Path malformed = java.nio.file.Path.of("target/cleanup-journal-test/broken-md009.intent");
+        java.nio.file.Files.writeString(malformed, "partial intent");
+        try {
+            var report = orphanReport.reconcileBatch();
+            assertTrue(report.findings().stream().anyMatch(f ->
+                    f.status() == HistoricalObjectOrphanReport.Status.INSPECTION_FAILED
+                            && "cleanup-journal/broken-md009.intent".equals(f.reference())));
+            assertTrue(java.nio.file.Files.exists(malformed), "report-only inspection must retain malformed evidence");
+            verify(storage, never()).delete(anyString());
+        } finally {
+            java.nio.file.Files.deleteIfExists(malformed);
+        }
     }
 
     @Test void storageFailureLeavesDurableManifestAndRestartedWorkerFinishesCleanup() {
@@ -326,8 +427,8 @@ class FolderDeletionLifecycleIntegrationTest {
         assertFalse(files.existsById(file.getId()));
         assertTrue(bucket.containsKey("pending-current"));
         FolderDeletionJob job = jobs.findAll().get(0);
-        assertEquals(List.of("pending-current"), objects.findByJobId(job.getId()).stream()
-                .map(FolderDeletionObject::getObjectKey).toList());
+        assertEquals(Set.of("pending-current", "pending-history"), new HashSet<>(objects.findByJobId(job.getId()).stream()
+                .map(FolderDeletionObject::getObjectKey).toList()));
         assertThrows(RuntimeException.class, () -> fileService.download(auth, file.getId()));
         var update = new com.minidrive.dto.file.FileMetadataUpdateRequest();
         update.setName("must-not-return.txt");
@@ -339,7 +440,7 @@ class FolderDeletionLifecycleIntegrationTest {
                 chunks, users, jobs, objects, storage, listingCache, transactionManager, cleanupJournal);
         assertTrue(restarted.attempt(job.getId()));
         assertFalse(bucket.containsKey("pending-current"));
-        assertTrue(bucket.containsKey("pending-history"));
+        assertFalse(bucket.containsKey("pending-history"));
         assertEquals(0, jobs.count());
     }
 

@@ -70,6 +70,7 @@ public class FileController {
                         folderId));
     }
 
+
     @GetMapping("/api/files/{id}")
     public ResponseEntity<FileMetadataResponse> get(
             @PathVariable UUID id,

@@ -94,8 +94,8 @@ public class FileService {
     public FileUploadResponse upload(Authentication authentication, MultipartFile multipartFile, UUID folderId) {
         User owner = currentUser(authentication);
         userRepository.findByIdForUpdate(owner.getId()).orElseThrow();
-        if (multipartFile == null || multipartFile.isEmpty()) {
-            throw new IllegalArgumentException("File must not be empty");
+        if (multipartFile == null) {
+            throw new IllegalArgumentException("File is required");
         }
         long size = multipartFile.getSize();
         if (size < 0) throw new IllegalArgumentException("Size in bytes must be non-negative");
@@ -357,8 +357,8 @@ public class FileService {
                     "You do not have permission to modify this file");
         }
 
-        if (multipartFile == null || multipartFile.isEmpty()) {
-            throw new IllegalArgumentException("File must not be empty");
+        if (multipartFile == null) {
+            throw new IllegalArgumentException("File is required");
         }
 
         long size = multipartFile.getSize();
@@ -686,12 +686,12 @@ public class FileService {
         File file = access.file();
         assertFileFolderWritable(file);
 
-        // Commit metadata removal and the existing durable object manifest
+        // Commit metadata removal and the complete durable object manifest
         // together before touching storage. If PostgreSQL rolls back, the file
         // and its bytes remain usable. Once committed, the file is no longer
         // readable and FolderDeletionLifecycle retries physical cleanup after
-        // failures or restart. Only the current key is scheduled: historical
-        // version objects remain retained as before.
+        // failures or restart. Historical objects are retained until this
+        // explicit permanent deletion removes their version records.
         UUID jobId = folderDeletionLifecycle.requestFile(id, file.getOwner().getId());
         if (jobId == null) return new DeletionResult(null, true, "COMPLETED");
         boolean complete = folderDeletionLifecycle.attemptIfDue(jobId);

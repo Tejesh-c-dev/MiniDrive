@@ -7,10 +7,24 @@
  * - GET /api/folders[?parentFolderId=<uuid>] -> FolderResponse[]
  * - GET /api/folders/{id}                    -> FolderResponse
  * - PATCH /api/folders/{id}                  -> FolderResponse
+ * - DELETE /api/folders/{id}                 -> 204 when cleanup completes, 202 when queued
  */
 import { apiClient } from '@/api/client';
 import { toApiError } from '@/api/errors';
 import type { FolderSummary } from '@/types/drive';
+import type { DeletionResult } from '@/types/api';
+
+/** Permanently delete a folder and its descendants through the backend lifecycle. */
+export async function deleteFolder(id: string): Promise<DeletionResult> {
+  try {
+    const response = await apiClient.delete<DeletionResult>(`/api/folders/${id}`);
+    return response.status === 202
+      ? response.data
+      : { complete: true };
+  } catch (error: unknown) {
+    throw toApiError(error);
+  }
+}
 
 /** List folders, optionally scoped to a parent (omit for drive root). */
 export async function listFolders(

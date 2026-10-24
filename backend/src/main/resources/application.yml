@@ -1,6 +1,6 @@
 spring:
-  config:
-    import: optional:file:../.env[.properties]
+  profiles:
+    default: dev
 
   application:
     name: minidrive
@@ -16,6 +16,10 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:56379}
+      username: ${REDIS_USERNAME:}
+      password: ${REDIS_PASSWORD:}
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:1s}
+      timeout: ${REDIS_COMMAND_TIMEOUT:1s}
 
   datasource:
     url: ${DB_URL}
@@ -79,6 +83,35 @@ minio:
   bucket: ${MINIO_BUCKET:minidrive-files}
 
 minidrive:
+  cors:
+    # Comma-separated exact browser origins; no paths, wildcards, or arbitrary ports.
+    allowed-origins: ${MINIDRIVE_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+  rate-limit:
+    # Conservative defaults; tune per public traffic profile. Fixed windows are atomic in Redis.
+    trust-proxy: ${MINIDRIVE_RATE_LIMIT_TRUST_PROXY:false}
+    trusted-proxies: ${MINIDRIVE_RATE_LIMIT_TRUSTED_PROXIES:}
+    registration:
+      limit: ${MINIDRIVE_RATE_LIMIT_REGISTER_LIMIT:20}
+      window: ${MINIDRIVE_RATE_LIMIT_REGISTER_WINDOW:1h}
+    login:
+      ip-limit: ${MINIDRIVE_RATE_LIMIT_LOGIN_IP_LIMIT:60}
+      account-limit: ${MINIDRIVE_RATE_LIMIT_LOGIN_ACCOUNT_LIMIT:12}
+      window: ${MINIDRIVE_RATE_LIMIT_LOGIN_WINDOW:15m}
+    share:
+      limit: ${MINIDRIVE_RATE_LIMIT_SHARE_LIMIT:120}
+      window: ${MINIDRIVE_RATE_LIMIT_SHARE_WINDOW:1m}
+  object-gc:
+    # The current orphan inventory is deliberately report-only: routed keys
+    # do not prove that every physical Silo object or lifecycle reference is known.
+    report-interval-ms: ${MINIDRIVE_OBJECT_GC_REPORT_INTERVAL_MS:21600000}
+    report-initial-delay-ms: ${MINIDRIVE_OBJECT_GC_REPORT_INITIAL_DELAY_MS:60000}
+    report-batch-size: ${MINIDRIVE_OBJECT_GC_REPORT_BATCH_SIZE:100}
+    orphan-grace-period-days: ${MINIDRIVE_OBJECT_GC_ORPHAN_GRACE_PERIOD_DAYS:30}
+  upload-cleanup:
+    interval-ms: ${MINIDRIVE_UPLOAD_CLEANUP_INTERVAL_MS:60000}
+    initial-delay-ms: ${MINIDRIVE_UPLOAD_CLEANUP_INITIAL_DELAY_MS:60000}
+    batch-size: ${MINIDRIVE_UPLOAD_CLEANUP_BATCH_SIZE:50}
+    claim-lease-ms: ${MINIDRIVE_UPLOAD_CLEANUP_CLAIM_LEASE_MS:300000}
   cleanup-journal:
     directory: ${MINIDRIVE_CLEANUP_JOURNAL_DIR:./data/cleanup-journal}
     retry-delay-ms: ${MINIDRIVE_CLEANUP_JOURNAL_RETRY_DELAY_MS:30000}
@@ -90,6 +123,13 @@ minidrive:
       backfill: ${MINIDRIVE_REPLICATION_BACKFILL:false}
       primary-node-id: ${MINIDRIVE_PRIMARY_NODE_ID:primary}
       repair-delay-ms: ${MINIDRIVE_REPAIR_DELAY_MS:30000}
+      spool:
+        directory: ${MINIDRIVE_REPLICATION_SPOOL_DIR:./data/replication-spool}
+        max-file-bytes: ${MINIDRIVE_REPLICATION_SPOOL_MAX_FILE_BYTES:5368709120}
+        max-reserved-bytes: ${MINIDRIVE_REPLICATION_SPOOL_MAX_RESERVED_BYTES:5368709120}
+        max-concurrent: ${MINIDRIVE_REPLICATION_SPOOL_MAX_CONCURRENT:1}
+        min-free-bytes: ${MINIDRIVE_REPLICATION_SPOOL_MIN_FREE_BYTES:1073741824}
+        capacity-check-interval-bytes: ${MINIDRIVE_REPLICATION_SPOOL_CHECK_INTERVAL_BYTES:16777216}
     nodes:
       - id: primary
         endpoint: ${MINIO_ENDPOINT:http://localhost:9000}

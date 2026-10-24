@@ -13,11 +13,14 @@ interface FileRowProps {
   canEdit: boolean;
   /** True while this row's content replacement is being submitted. */
   replacing?: boolean;
+  deleting?: boolean;
   onDownload: (file: FileSummary) => void;
   onRename: (file: FileSummary) => void;
   onShare: (file: FileSummary) => void;
   onHistory: (file: FileSummary) => void;
   onReplace: (file: FileSummary) => void;
+  onDelete: (file: FileSummary) => void;
+  onPreview: (file: FileSummary) => void;
 }
 
 /**
@@ -34,11 +37,14 @@ export default function FileRow({
   disabled,
   canEdit,
   replacing,
+  deleting,
   onDownload,
   onRename,
   onShare,
   onHistory,
   onReplace,
+  onDelete,
+  onPreview,
 }: FileRowProps) {
   return (
     <li
@@ -60,6 +66,12 @@ export default function FileRow({
       <span className="hidden w-40 shrink-0 text-right text-xs text-gray-500 md:block">
         {formatUpdatedAt(file.updatedAt)}
       </span>
+      <button
+        type="button"
+        onClick={() => onPreview(file)}
+        aria-label={`Preview ${file.name}`}
+        className="shrink-0 rounded-md border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700"
+      >Preview</button>
       <button
         type="button"
         onClick={() => onRename(file)}
@@ -97,12 +109,22 @@ export default function FileRow({
       )}
       <button
         type="button"
-        disabled={disabled}
+        disabled={disabled || deleting}
         onClick={() => onDownload(file)}
         data-testid="file-download"
         className="shrink-0 rounded-md border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
       >
         Download
+      </button>
+      <button
+        type="button"
+        disabled={deleting}
+        onClick={() => onDelete(file)}
+        aria-label={`Delete ${file.name}`}
+        data-testid="file-delete"
+        className="shrink-0 rounded-md border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-700 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {deleting ? 'Deleting…' : 'Delete'}
       </button>
     </li>
   );

@@ -14,6 +14,6 @@ export default defineConfig({
   test: {
     // Unit tests cover the transport-agnostic upload logic; no DOM is required.
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
   },
 });

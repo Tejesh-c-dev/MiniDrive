@@ -5,6 +5,7 @@ import LoginPage from '@/pages/LoginPage';
 import RegisterPage from '@/pages/RegisterPage';
 import DrivePage from '@/pages/DrivePage';
 import SharedFilePage from '@/pages/SharedFilePage';
+import SharedWithMePage from '@/pages/SharedWithMePage';
 import ProtectedRoute from '@/components/ProtectedRoute';
 import PublicRoute from '@/components/PublicRoute';
 
@@ -32,6 +33,7 @@ export const router = createBrowserRouter([
         element: <ProtectedRoute />,
         children: [
           { path: 'drive', element: <DrivePage /> },
+          { path: 'drive/shared', element: <SharedWithMePage /> },
           { path: 'drive/folders/:folderId', element: <DrivePage /> },
         ],
       },

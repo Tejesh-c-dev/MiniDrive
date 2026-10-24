@@ -91,6 +91,256 @@
       "targets": [{ "editorMode": "code", "expr": "sum by (status) (rate(http_server_requests_seconds_count{job=\"minidrive\"}[5m]))", "legendFormat": "HTTP {{status}}", "range": true, "refId": "A" }],
       "title": "HTTP response status distribution",
       "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 22},
+      "id": 8,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "sum(rate(http_server_requests_seconds_sum{job=\"minidrive\"}[5m])) / sum(rate(http_server_requests_seconds_count{job=\"minidrive\"}[5m]))", "legendFormat": "{{instance}}", "range": true, "refId": "A"}],
+      "title": "HTTP request mean duration (not percentile)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 22},
+      "id": 9,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "sum(rate(http_server_requests_seconds_count{job=\"minidrive\",status=~\"5..\"}[5m]))", "legendFormat": "5xx", "range": true, "refId": "A"}],
+      "title": "HTTP 5xx responses / second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 22},
+      "id": 10,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "sum by (action) (rate(jvm_gc_pause_seconds_sum{job=\"minidrive\"}[5m]))", "legendFormat": "{{action}}", "range": true, "refId": "A"}],
+      "title": "JVM garbage collection pause / second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 29},
+      "id": 11,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "pg_up{job=\"postgres\"}", "legendFormat": "PostgreSQL", "range": true, "refId": "A"}],
+      "title": "PostgreSQL availability",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 29},
+      "id": 12,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "pg_stat_database_numbackends{job=\"postgres\"}", "legendFormat": "{{datname}}", "range": true, "refId": "A"}],
+      "title": "PostgreSQL connections by database",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 29},
+      "id": 13,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "sum by (datname) (rate(pg_stat_database_xact_commit{job=\"postgres\"}[5m]) + rate(pg_stat_database_xact_rollback{job=\"postgres\"}[5m]))", "legendFormat": "{{datname}}", "range": true, "refId": "A"}],
+      "title": "PostgreSQL transaction rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 36},
+      "id": 14,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "redis_up{job=\"redis\"}", "legendFormat": "Redis", "range": true, "refId": "A"}],
+      "title": "Redis availability",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "bytes", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 36},
+      "id": 15,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "redis_memory_used_bytes{job=\"redis\"}", "legendFormat": "used", "range": true, "refId": "A"}],
+      "title": "Redis memory used",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 36},
+      "id": 16,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "redis_connected_clients{job=\"redis\"}", "legendFormat": "clients", "range": true, "refId": "A"}],
+      "title": "Redis connected clients",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 43},
+      "id": 17,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "up{job=~\"silo-.*\"}", "legendFormat": "{{job}}", "range": true, "refId": "A"}],
+      "title": "Silo scrape availability",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "bytes", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 43},
+      "id": 18,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "(minio_cluster_capacity_usable_total_bytes{job=~\"silo-.*\"} - minio_cluster_capacity_usable_free_bytes{job=~\"silo-.*\"})", "legendFormat": "{{node}}", "range": true, "refId": "A"}],
+      "title": "Silo usable capacity used (derived)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 43},
+      "id": 19,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "minio_s3_requests_incoming_total{job=\"silo-primary\"}", "legendFormat": "incoming requests", "range": true, "refId": "A"}],
+      "title": "Current incoming S3 requests",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "bytes", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 50},
+      "id": 20,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "minio_node_process_resident_memory_bytes{job=\"silo-primary-node\"}", "legendFormat": "primary process", "range": true, "refId": "A"}],
+      "title": "Silo primary process resident memory",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "bytes", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 50},
+      "id": 21,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "minidrive_replication_spool_reserved_bytes{job=\"minidrive\"}", "legendFormat": "reserved", "range": true, "refId": "A"}],
+      "title": "Replication spool reserved bytes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 50},
+      "id": 22,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "sum by (reason) (rate(minidrive_replication_spool_rejections_total{job=\"minidrive\"}[5m]))", "legendFormat": "{{reason}}", "range": true, "refId": "A"}],
+      "title": "Replication spool rejects / second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 50},
+      "id": 23,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "rate(minio_node_process_cpu_total_seconds{job=\"silo-primary-node\"}[5m])", "legendFormat": "primary process", "range": true, "refId": "A"}],
+      "title": "Silo primary process CPU seconds / second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "bytes", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 50},
+      "id": 24,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "minio_node_mem_available{job=\"silo-primary-resource\"}", "legendFormat": "host available", "range": true, "refId": "A"}],
+      "title": "Silo primary host available memory",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 57},
+      "id": 25,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "rate(minio_s3_requests_rejected_auth_total{job=\"silo-primary\"}[5m])", "legendFormat": "auth rejects", "range": true, "refId": "A"}],
+      "title": "Silo primary rejected auth requests / second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "bytes", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 57},
+      "id": 26,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "minio_node_drive_used_bytes{job=\"silo-primary-resource\"}", "legendFormat": "{{drive}}", "range": true, "refId": "A"}],
+      "title": "Silo primary drive used bytes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 57},
+      "id": 27,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "sum(rate(pg_stat_database_blks_hit{job=\"postgres\"}[5m])) / (sum(rate(pg_stat_database_blks_hit{job=\"postgres\"}[5m])) + sum(rate(pg_stat_database_blks_read{job=\"postgres\"}[5m])))", "legendFormat": "cache hit ratio", "range": true, "refId": "A"}],
+      "title": "PostgreSQL shared-buffer hit ratio",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 64},
+      "id": 28,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "sum(rate(redis_keyspace_hits_total{job=\"redis\"}[5m])) / (sum(rate(redis_keyspace_hits_total{job=\"redis\"}[5m])) + sum(rate(redis_keyspace_misses_total{job=\"redis\"}[5m])))", "legendFormat": "hit ratio", "range": true, "refId": "A"}],
+      "title": "Redis keyspace hit ratio",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 64},
+      "id": 29,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "sum by (operation,node_id) (rate(minidrive_storage_node_operation_seconds_count{job=\"minidrive\"}[5m]))", "legendFormat": "{{operation}} / {{node_id}}", "range": true, "refId": "A"}],
+      "title": "Storage operations / second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 16, "y": 64},
+      "id": 30,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "sum by (operation,node_id) (rate(minidrive_storage_node_operation_seconds_count{job=\"minidrive\",outcome=\"failure\"}[5m]))", "legendFormat": "{{operation}} / {{node_id}}", "range": true, "refId": "A"}],
+      "title": "Storage operation failures / second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "Bps", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 0, "y": 71},
+      "id": 31,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "sum by (operation,node_id) (rate(minidrive_storage_node_bytes_total{job=\"minidrive\"}[5m]))", "legendFormat": "{{operation}} / {{node_id}}", "range": true, "refId": "A"}],
+      "title": "Storage bytes / second",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "minidrive-prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ops", "min": 0}, "overrides": []},
+      "gridPos": {"h": 7, "w": 8, "x": 8, "y": 71},
+      "id": 32,
+      "options": {"legend": {"calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"editorMode": "code", "expr": "rate(redis_commands_processed_total{job=\"redis\"}[5m])", "legendFormat": "commands", "range": true, "refId": "A"}],
+      "title": "Redis commands / second",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",
@@ -102,5 +352,5 @@
   "timezone": "browser",
   "title": "MiniDrive Overview",
   "uid": "minidrive-overview",
-  "version": 1
+  "version": 4
 }

@@ -70,6 +70,9 @@ class SiloStorageServiceRealMinioLiveTest {
 
     @BeforeAll
     static void startAgainstLiveMinio() throws Exception {
+        assertEquals("http://127.0.0.1:9200", ENDPOINT, "Live Silo tests are restricted to the disposable integration node");
+        assertEquals("md_it_silo", ROOT_USER);
+        assertTrue(!"minioadmin".equals(ROOT_PASSWORD), "Development storage credentials are not accepted");
         MinioClient reachableClient = MinioClient.builder()
                 .endpoint(ENDPOINT)
                 .credentials(ROOT_USER, ROOT_PASSWORD)
@@ -105,15 +108,46 @@ class SiloStorageServiceRealMinioLiveTest {
     }
 
     @Test
+    @Order(0)
+    void zeroByteObjectRoundTripsWithEmptySha256() throws Exception {
+        String key = FINAL_PREFIX + "zero-byte";
+        storageService.upload(key, new ByteArrayInputStream(new byte[0]), 0,
+                "application/octet-stream");
+        assertEquals(java.util.Optional.of(true), storageService.exists(key));
+        byte[] downloaded = readAll(storageService.download(key));
+        assertArrayEquals(new byte[0], downloaded);
+        assertEquals("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                sha256Hex(downloaded));
+    }
+
+    @Test
     @Order(1)
     void stagingChunkUploadsRetrievesAndComparesByteForByte() throws Exception {
         byte[] chunk = randomBytes(64 * 1024);
         String key = STAGING_PREFIX + "chunk-0";
         storageService.upload(key, new ByteArrayInputStream(chunk), chunk.length,
                 "application/octet-stream");
+        assertEquals(java.util.Optional.of(true), storageService.exists(key));
         byte[] downloaded = readAll(storageService.download(key));
         assertArrayEquals(chunk, downloaded);
         assertEquals(sha256Hex(chunk), sha256Hex(downloaded));
+    }
+
+    @Test
+    @Order(6)
+    void statDistinguishesExplicitNotFoundFromAuthenticationAndNodeFailures() {
+        String missingKey = STAGING_PREFIX + "stat-missing-" + java.util.UUID.randomUUID();
+        assertEquals(java.util.Optional.of(false), storageService.exists(missingKey));
+
+        SiloStorageService denied = new SiloStorageService(MinioClient.builder().endpoint(ENDPOINT)
+                .credentials("invalid-md009-user", "invalid-md009-secret").build(), BUCKET_NAME);
+        assertThrows(StorageException.class, () -> denied.exists(missingKey),
+                "authentication failure must remain inconclusive, not become an absence result");
+
+        SiloStorageService unavailable = new SiloStorageService(MinioClient.builder().endpoint("http://127.0.0.1:1")
+                .credentials(ROOT_USER, ROOT_PASSWORD).build(), BUCKET_NAME);
+        assertThrows(StorageException.class, () -> unavailable.exists(missingKey),
+                "an unavailable authoritative Silo must remain inconclusive");
     }
 
     @Test

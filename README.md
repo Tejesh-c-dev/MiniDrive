@@ -1,6 +1,90 @@
 # MiniDrive
 A mini version alternative for google drive
 
+## Production deployment boundary
+
+The repository does not provide a complete production deployment. The Compose
+file is for local development and starts PostgreSQL, Redis, primary and
+secondary Silo, and one-shot private-bucket initialization jobs. It does not
+start the Spring backend, React frontend, HTTPS ingress, or monitoring services.
+Its host ports bind to loopback (`55432`, `56379`, `9000`/`9001`, and
+`9100`/`9101`); PostgreSQL and both Silo nodes use named volumes
+(`postgres_data`, `minio_data`, and `minio_secondary_data`), while Redis has no
+persistent volume. Keep these dependencies on private networks in any deployment.
+Redis uses ACL authentication with separate application and monitoring users.
+Loopback binding limits host exposure but does not replace Redis authentication.
+
+For production, run the backend with the Spring `prod` profile and supply the
+required variables listed below through the deployment environment or an
+orchestrator's secret injection facility. This repository does not select a
+cloud provider, secret manager, frontend hosting service, or proxy. Do not use
+the development Compose credentials or the development `.env.example` as
+production values. PostgreSQL, Redis, and Silo must be provisioned separately
+or via an operator-managed private network. The React frontend is built and
+hosted separately. Configure internal network rules so only the backend can
+reach its data services, and do not publish their administrative ports to the
+public internet. Use a least-privilege PostgreSQL service account and Silo
+credentials scoped to the buckets the application needs.
+
+Public HTTPS must terminate at an externally operated reverse proxy, load
+balancer, or equivalent ingress. TLS certificates, private keys, renewal, and
+expiry monitoring belong to that operator. The ingress forwards requests to the
+backend over a private, access-controlled network; use TLS on that hop when the
+network is not trusted. The backend does not provide public TLS in this
+repository. The production profile disables Spring forwarded-header processing.
+For MD-012 rate-limit client IPs, set `MINIDRIVE_RATE_LIMIT_TRUST_PROXY=true`
+and `MINIDRIVE_RATE_LIMIT_TRUSTED_PROXIES` to the ingress source IPs/CIDRs only.
+The ingress must remove client-supplied `X-Forwarded-For` and append the address
+it observed. The limiter uses the rightmost forwarded address only when the
+socket peer matches that allowlist; arbitrary clients must not be able to reach
+the backend directly or impersonate a trusted proxy.
+
+The `prod` profile requires `DB_URL` (PostgreSQL JDBC URL), `DB_USERNAME`,
+`DB_PASSWORD`, `JWT_SECRET` (at least 32 UTF-8 bytes), `REDIS_HOST`, `REDIS_PORT`,
+`REDIS_USERNAME`, `REDIS_PASSWORD`, valid
+`REDIS_PORT`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`,
+`MINIO_BUCKET`, and `MINIDRIVE_CORS_ALLOWED_ORIGINS` (comma-separated exact
+HTTPS origins, no wildcard or path). It rejects known development credential
+values. The ingress trust settings above are also mandatory. The secondary Silo
+variables `MINIO_SECONDARY_ENDPOINT`, `MINIO_SECONDARY_ACCESS_KEY`,
+`MINIO_SECONDARY_SECRET_KEY`, and `MINIO_SECONDARY_BUCKET` become mandatory
+when `MINIO_SECONDARY_ENABLED=true`. Missing or invalid required settings stop
+startup with key names only; secret values are not included in diagnostics.
+Supply these values to the backend process and keep them in the operator's
+secret store, outside source control. Never pass real values on command lines
+that are retained in shell history or process listings.
+
+Example launch from `backend` after injecting the required environment values:
+
+```powershell
+$env:SPRING_PROFILES_ACTIVE = 'prod'
+.\mvnw.cmd spring-boot:run
+```
+
+Production Actuator exposure remains limited to health and Prometheus, with the
+existing loopback-only security rules. The current Prometheus scrape endpoint
+is reachable only from the backend host; remote scrape access is not configured.
+Compose does not provide monitoring. MD-011 revocation state remains in PostgreSQL. MD-012 rate limits
+depend on Redis and fail closed for protected requests when Redis is unavailable.
+MD-013 CORS uses only the configured exact-origin allowlist.
+
+### Minimum backup and recovery responsibilities
+
+There are no repository backup or restore scripts and no automatic backup,
+point-in-time recovery, off-site replication, or disaster-recovery guarantee.
+Operators must configure and monitor PostgreSQL backups and protect Silo object
+content independently. A metadata-only restore is insufficient: file metadata
+and object bytes must represent a consistent recovery point. Quiesce writes or
+use coordinated snapshots before backup; restore PostgreSQL and Silo content
+from the matching recovery point, then run read-only verification of schema,
+file/version records, object locations, representative object reads and hashes,
+and authentication/revocation behavior before reopening traffic. Protect the
+production secret set (especially `JWT_SECRET` and storage/database credentials)
+in the secret manager's backup/recovery process; retaining the same JWT secret
+avoids invalidating otherwise valid tokens. Assign an operator for retention,
+backup-failure alerting, secret recovery, and periodic isolated restore drills.
+These are operational prerequisites; this repository does not automate them.
+
 ## Local database
 
 MiniDrive development PostgreSQL runs in Docker and is isolated from any PostgreSQL
@@ -30,41 +114,58 @@ Set-Location C:\MiniDrive\backend
 .\mvnw.cmd spring-boot:run
 ```
 
-The backend reads its datasource settings from the root `.env` file. Copy
-`.env.example` to `.env` for a new checkout and keep the real `.env` local.
+The default `dev` profile reads its datasource settings from the root `.env`
+file. Copy `.env.example` to `.env` for a new checkout and keep the real `.env`
+local. The explicit `prod` profile does not import this file.
 
-## Local Prometheus monitoring
+## Local observability
 
-Prometheus runs directly on the Windows host. Download the Windows AMD64
-release from the [official Prometheus download page](https://prometheus.io/download/)
-and extract it outside this repository, for example to `C:\tools\prometheus`.
-Start the backend first using the workflow above. Its Actuator endpoints share
-the application's port 8080 and are restricted to loopback clients; MiniDrive
-does not use a separate management listener on port 8081. Only
-`/actuator/health` and `/actuator/prometheus` are exposed.
+For authenticated Redis, set `REDIS_USERNAME`, `REDIS_PASSWORD`,
+`REDIS_EXPORTER_USERNAME`, and `REDIS_EXPORTER_PASSWORD` in the untracked `.env`.
+Use distinct randomly generated hex passwords and never put real values in
+commands or committed files. `.env.example` contains placeholders only.
+Compose disables the Redis default user and initializes `minidrive_app` for
+cache and atomic rate-limit operations and `minidrive_exporter` for monitoring.
+Both credentials are required before Redis starts. For an existing local
+service, inspect its Compose project/container and port before recreating Redis;
+this service has no attached volume, and do not use `down -v` because PostgreSQL
+and Silo volumes are persistent. Recreating Redis discards cache contents only.
+The loopback-only port binding reduces network exposure but does not replace
+Redis authentication.
 
-The scrape configuration is `infra/prometheus.yml`. From a separate PowerShell
-window, validate and start Prometheus with its data under `%LOCALAPPDATA%`, not
-in the Git repository:
+The optional local monitoring setup is documented in
+[`infra/monitoring/README.md`](infra/monitoring/README.md). The backend and
+frontend still run on the host; PostgreSQL, Redis, and Silo run in Compose.
+Prometheus and Grafana run as host processes so all management interfaces can
+remain loopback-only while Prometheus satisfies the backend's loopback-only
+Actuator policy. The optional Compose monitoring profile adds the PostgreSQL
+and Redis exporters without changing normal application startup.
+
+The provisioned Grafana dashboard uses the repository's `infra/grafana`
+assets. Prometheus scrapes `/actuator/prometheus` on the configured backend
+port 8080 and the local exporters and Silo-compatible metrics routes. The
+current application exposes HTTP count/sum, JVM/process metrics, and bounded
+file/storage/replication/spool metrics; HTTP latency percentiles are unavailable
+because histogram buckets are not configured. PostgreSQL query timings and
+per-container CPU/memory are also unavailable. Silo provides usable capacity,
+incoming request and rejected-auth counts, and node metrics; its resource
+endpoint reflects the Linux host view available to Silo and is not isolated
+container telemetry.
+
+Install the small Python validation dependency and run the repeatable
+configuration checks from the repository root:
 
 ```powershell
-New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\MiniDrive\prometheus" | Out-Null
-Set-Location C:\tools\prometheus
-.\promtool.exe check config C:\MiniDrive\infra\prometheus.yml
-.\prometheus.exe --config.file=C:\MiniDrive\infra\prometheus.yml --storage.tsdb.path="$env:LOCALAPPDATA\MiniDrive\prometheus" --web.listen-address=127.0.0.1:9090
+python -m pip install -r infra/monitoring/requirements.txt
+.\infra\monitoring\validate.ps1
 ```
 
-The `minidrive` job scrapes `http://127.0.0.1:8080/actuator/prometheus` every
-15 seconds. Open the UI at http://127.0.0.1:9090 and check **Status → Targets**
-for `minidrive` to show `UP`. The API endpoint
-`http://127.0.0.1:9090/api/v1/targets` also reports target health; the query
-`up{job="minidrive"}` should return `1`, and `jvm_memory_used_bytes` confirms
-sample data is present.
-
-Prometheus is host-based so it can scrape the backend at `127.0.0.1:8080`, which
-Actuator's loopback-only security rules allow, without changing Actuator access
-or adding a backend service to Docker Compose. The Prometheus UI also binds only
-to `127.0.0.1:9090`.
+This renders base and monitoring Compose configurations, checks scrape targets
+against the application port/security configuration, validates dashboard and
+provisioning references, and runs Prometheus `promtool`. Do not use the
+development setup as production monitoring; production secret injection,
+network policy, TLS, and remote scrape authentication are outside this
+repository's monitoring deployment.
 
 ## Object storage (MinIO)
 

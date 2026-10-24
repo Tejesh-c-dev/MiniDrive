@@ -216,6 +216,11 @@ public class UploadSession {
         this.status = status;
     }
 
+    /** Refreshes the durable worker lease timestamp when cleanup is claimed. */
+    public void touch() {
+        this.updatedAt = LocalDateTime.now();
+    }
+
     /**
      * Records the file/version this session produced and moves it to
      * {@link UploadSessionStatus#COMPLETED}. Callers must only invoke this once

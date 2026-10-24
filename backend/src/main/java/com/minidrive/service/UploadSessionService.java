@@ -477,7 +477,10 @@ public class UploadSessionService {
      */
     private CompletionPlan buildCompletionPlan(UUID ownerId, UUID sessionId) {
 
-        UploadSession session = uploadSessionRepository.findByIdAndOwnerId(sessionId, ownerId)
+        // Keep the session row locked through assembly and the final metadata
+        // transaction. Expiry cleanup must wait and will observe COMPLETED if
+        // this operation wins; it cannot delete staging bytes mid-assembly.
+        UploadSession session = uploadSessionRepository.findByIdAndOwnerIdForUpdate(sessionId, ownerId)
                 .orElseThrow(() -> new ResourceNotFoundException("Upload session not found"));
 
         if (session.getStatus() == UploadSessionStatus.COMPLETED) {

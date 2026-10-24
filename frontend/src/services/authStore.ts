@@ -4,7 +4,7 @@ import {
   removeToken,
   setToken,
 } from '@/utils/tokenStorage';
-import { login as loginApi, register as registerApi } from './authService';
+import { login as loginApi, logout as logoutApi, register as registerApi } from './authService';
 import type { AuthResponse, LoginRequest, RegisterRequest } from '@/types/auth';
 
 /**
@@ -90,10 +90,19 @@ export async function loginWithEmailAndPassword(
 }
 
 /**
- * Log out: remove the stored JWT and clear client auth state. The backend
- * provides no logout endpoint (stateless JWT), so only local state is cleared.
+ * Clear local auth immediately, then ask the server to revoke that exact token.
+ * A false result means server-side revocation could not be confirmed; another
+ * copy of the token may remain usable until its normal expiration.
  */
-export function logout(): void {
+export async function logout(): Promise<boolean> {
+  const token = getToken();
   removeToken();
   notify();
+  if (!token) return false;
+  try {
+    await logoutApi(token);
+    return true;
+  } catch {
+    return false;
+  }
 }

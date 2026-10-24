@@ -1,0 +1,72 @@
+services:
+  redis-test:
+    image: redis:7.4.2-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:56439:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: minidrive_it
+      POSTGRES_USER: md_it
+      POSTGRES_PASSWORD: md_it_2026_disposable
+    ports:
+      - "127.0.0.1:55439:5432"
+    volumes:
+      - live_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U md_it -d minidrive_it"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  silo-primary:
+    image: docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: md_it_silo
+      MINIO_ROOT_PASSWORD: md_it_silo_2026_disposable
+    ports:
+      - "127.0.0.1:9200:9000"
+      - "127.0.0.1:9201:9001"
+    volumes:
+      - live_silo_primary_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+  silo-secondary:
+    image: docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: md_it_silo
+      MINIO_ROOT_PASSWORD: md_it_silo_2026_disposable
+    ports:
+      - "127.0.0.1:9300:9000"
+      - "127.0.0.1:9301:9001"
+    volumes:
+      - live_silo_secondary_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+  silo-bootstrap:
+    image: pgsty/mc:RELEASE.2026-09-16T00-00-00Z
+    depends_on:
+      silo-primary: { condition: service_healthy }
+      silo-secondary: { condition: service_healthy }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "set -e; mc alias set p http://silo-primary:9000 md_it_silo md_it_silo_2026_disposable; mc alias set s http://silo-secondary:9000 md_it_silo md_it_silo_2026_disposable; mc mb --ignore-existing p/minidrive-it-primary; mc mb --ignore-existing s/minidrive-it-secondary; mc anonymous set private p/minidrive-it-primary; mc anonymous set private s/minidrive-it-secondary"
+volumes:
+  live_pg_data:
+  live_silo_primary_data:
+  live_silo_secondary_data:

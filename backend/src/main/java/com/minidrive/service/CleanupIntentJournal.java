@@ -14,8 +14,10 @@ import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -114,25 +116,46 @@ public class CleanupIntentJournal {
     }
 
     public List<Intent> pending() {
-        if (!Files.isDirectory(directory)) return List.of();
+        return inspect(500).intents();
+    }
+
+    /** A bounded, read-only inventory that preserves failures for reconciliation. */
+    public Inspection inspect(int limit) {
+        int boundedLimit = Math.max(1, Math.min(limit, 500));
+        try {
+            if (!Files.readAttributes(directory, BasicFileAttributes.class).isDirectory())
+                return new Inspection(List.of(), List.of(
+                        new Issue(directoryName(), "cleanup journal path is not a directory")), false);
+        } catch (NoSuchFileException missing) {
+            return new Inspection(List.of(), List.of(), false);
+        } catch (IOException unavailable) {
+            return new Inspection(List.of(), List.of(new Issue(directoryName(),
+                    "unable to inspect cleanup journal directory (" + unavailable.getClass().getSimpleName() + ")")), false);
+        }
         List<Intent> result = new ArrayList<>();
+        List<Issue> issues = new ArrayList<>();
+        boolean limitReached = false;
         try (DirectoryStream<Path> entries = Files.newDirectoryStream(directory, "*.intent")) {
             for (Path entry : entries) {
+                if (result.size() + issues.size() >= boundedLimit) { limitReached = true; break; }
                 try {
                     String key = new String(Base64.getUrlDecoder().decode(Files.readAllBytes(entry)), StandardCharsets.UTF_8);
                     if (!key.isBlank() && entry.equals(entryPath(key))) result.add(new Intent(key, entry));
-                    else log.error("Invalid cleanup journal entry {} retained for operator review", entry);
+                    else issues.add(new Issue(entry.getFileName().toString(), "malformed cleanup intent retained"));
                 } catch (RuntimeException | IOException corrupt) {
-                    log.error("Unreadable cleanup journal entry {} retained for operator review", entry, corrupt);
+                    issues.add(new Issue(entry.getFileName().toString(), "unreadable cleanup intent retained ("
+                            + corrupt.getClass().getSimpleName() + ")"));
                 }
             }
         } catch (IOException failure) {
-            log.error("Unable to enumerate cleanup journal at {}", directory, failure);
+            issues.add(new Issue(directoryName(), "unable to enumerate cleanup journal ("
+                    + failure.getClass().getSimpleName() + ")"));
         }
-        return result;
+        return new Inspection(List.copyOf(result), List.copyOf(issues), limitReached);
     }
 
     public boolean isPending(Intent intent) { return Files.isRegularFile(intent.path()); }
+    public String directoryName() { return directory.getFileName() == null ? "cleanup-journal" : directory.getFileName().toString(); }
 
     public void resolve(Intent intent) {
         resolvePath(intent.path());
@@ -179,6 +202,8 @@ public class CleanupIntentJournal {
     }
 
     public record Intent(String objectKey, Path path) { }
+    public record Issue(String reference, String detail) { }
+    public record Inspection(List<Intent> intents, List<Issue> issues, boolean limitReached) { }
 
     public static final class LockHandle implements AutoCloseable {
         private final ReentrantLock local;

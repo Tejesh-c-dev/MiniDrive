@@ -10,6 +10,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.util.Map;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -23,6 +25,8 @@ class RoutingStorageReplicationTest {
     private NodeStorageClient primary;
     private NodeStorageClient secondary;
     private RoutingStorageService storage;
+
+    @org.junit.jupiter.api.io.TempDir Path spoolDir;
 
     @BeforeEach
     void setUp() {
@@ -74,6 +78,46 @@ class RoutingStorageReplicationTest {
         assertEquals(0, storage.repairOnce());
         assertEquals(1, jdbc.queryForObject("select count(*) from object_replicas where object_key='object' and storage_node_id='secondary'", Integer.class));
         assertEquals(1, jdbc.queryForObject("select count(*) from object_replicas where object_key='object' and storage_node_id='secondary' and status='HEALTHY'", Integer.class));
+    }
+
+    @Test
+    void primaryFailureRemovesSpoolAndReleasesReservation() throws Exception {
+        var policy = new ReplicationSpoolProperties(); policy.setDirectory(spoolDir.resolve("spool"));
+        policy.setMinFreeBytes(0);
+        var registry = new SimpleMeterRegistry();
+        try (var spoolManager = new ReplicationSpoolManager(policy, registry, true)) {
+            var routed = new RoutingStorageService(jdbc, Map.of("primary", primary, "secondary", secondary),
+                    (key, ids) -> "primary", registry, true, "primary", spoolManager);
+            doThrow(new RuntimeException("primary offline")).when(primary)
+                    .upload(eq("failed"), any(), anyLong(), anyString());
+            assertThrows(RuntimeException.class, () -> routed.upload("failed", new ByteArrayInputStream(new byte[]{1, 2}), 2, "text/plain"));
+            try (var files = Files.list(policy.getDirectory())) {
+                assertEquals(0, files.filter(path -> path.toString().endsWith(".spool")).count());
+            }
+            assertEquals(0, registry.get("minidrive_replication_spool_active").gauge().value());
+            assertEquals(0, registry.get("minidrive_replication_spool_reserved_bytes").gauge().value());
+            verify(secondary, never()).upload(eq("failed"), any(), anyLong(), anyString());
+        }
+    }
+
+    @Test
+    void secondaryFailureKeepsRepairStateAndRemovesSpool() throws Exception {
+        var policy = new ReplicationSpoolProperties(); policy.setDirectory(spoolDir.resolve("secondary-spool"));
+        policy.setMinFreeBytes(0);
+        var registry = new SimpleMeterRegistry();
+        try (var spoolManager = new ReplicationSpoolManager(policy, registry, true)) {
+            var routed = new RoutingStorageService(jdbc, Map.of("primary", primary, "secondary", secondary),
+                    (key, ids) -> "primary", registry, true, "primary", spoolManager);
+            doThrow(new RuntimeException("secondary offline")).when(secondary)
+                    .upload(eq("partial-replica"), any(), anyLong(), anyString());
+            byte[] bytes = "replicated-content".getBytes();
+            routed.upload("partial-replica", new ByteArrayInputStream(bytes), bytes.length, "text/plain");
+            assertEquals(1, jdbc.queryForObject("select count(*) from object_replicas where object_key='partial-replica' and storage_node_id='secondary' and status='FAILED'", Integer.class));
+            try (var files = Files.list(policy.getDirectory())) {
+                assertEquals(0, files.filter(path -> path.toString().endsWith(".spool")).count());
+            }
+            assertEquals(0, registry.get("minidrive_replication_spool_reserved_bytes").gauge().value());
+        }
     }
 
     @Test

@@ -3,7 +3,10 @@ package com.minidrive.controller;
 
 import com.minidrive.entity.User;
 import com.minidrive.repository.UserRepository;
+import com.minidrive.repository.RevokedTokenRepository;
+import com.minidrive.entity.RevokedToken;
 import com.minidrive.security.JwtService;
+import com.minidrive.service.TokenRevocationService;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,6 +21,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.concurrent.ThreadLocalRandom;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
@@ -35,11 +39,22 @@ class AuthControllerTest {
     @Autowired private UserRepository userRepository;
     @Autowired private PasswordEncoder passwordEncoder;
     @Autowired private JwtService jwtService;
+    @Autowired private RevokedTokenRepository revokedTokenRepository;
+    @Autowired private TokenRevocationService tokenRevocationService;
     @Value("${jwt.secret}") private String jwtSecret;
 
     @BeforeEach
     void cleanup() {
+        revokedTokenRepository.deleteAll();
         userRepository.deleteAll();
+    }
+
+    @Test
+    void newlyIssuedTokensHaveDistinctIdentifiers() {
+        var first = jwtService.parseValidatedToken(jwtService.generateToken("user@test.com"));
+        var second = jwtService.parseValidatedToken(jwtService.generateToken("user@test.com"));
+        org.junit.jupiter.api.Assertions.assertNotNull(first.tokenId());
+        org.junit.jupiter.api.Assertions.assertNotEquals(first.tokenId(), second.tokenId());
     }
 
     @Test
@@ -115,7 +130,11 @@ class AuthControllerTest {
                 .issuedAt(new Date()).expiration(new Date(System.currentTimeMillis() + 60_000))
                 .signWith(Keys.hmacShaKeyFor("different-test-signing-key-long-enough".getBytes(StandardCharsets.UTF_8)))
                 .compact();
-        for (String token : new String[] { "not-a-jwt", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.random", invalidSignature }) {
+        String missingIdentifier = Jwts.builder().subject("tejesh@test.com")
+                .issuedAt(new Date()).expiration(new Date(System.currentTimeMillis() + 60_000))
+                .signWith(Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8)))
+                .compact();
+        for (String token : new String[] { "not-a-jwt", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.random", invalidSignature, missingIdentifier }) {
             mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + token))
                     .andExpect(status().isUnauthorized());
         }
@@ -134,6 +153,47 @@ class AuthControllerTest {
         String expiredToken = new JwtService(jwtSecret, -1).generateToken("tejesh@test.com");
         mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + expiredToken))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void logoutRevokesOnlyPresentedTokenAndPersistsAcrossServiceInstances() throws Exception {
+        registerAndGetToken("Tejesh", "tejesh@test.com");
+        String first = loginAndGetToken("tejesh@test.com", PASSWORD);
+        String second = loginAndGetToken("tejesh@test.com", PASSWORD);
+
+        mockMvc.perform(post("/api/auth/logout").header("Authorization", "Bearer " + first))
+                .andExpect(status().isNoContent());
+
+        // A new service instance queries the same database-backed registry.
+        TokenRevocationService restarted = new TokenRevocationService(revokedTokenRepository);
+        String firstId = jwtService.parseValidatedToken(first).tokenId();
+        org.junit.jupiter.api.Assertions.assertTrue(restarted.isRevoked(firstId));
+        mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + first))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + second))
+                .andExpect(status().isOk());
+        org.junit.jupiter.api.Assertions.assertEquals(1, revokedTokenRepository.count());
+    }
+
+    @Test
+    void repeatedLogoutIsRejectedAsUnauthenticatedAfterFirstSuccessfulRevocation() throws Exception {
+        registerAndGetToken("Tejesh", "tejesh@test.com");
+        String token = loginAndGetToken("tejesh@test.com", PASSWORD);
+        mockMvc.perform(post("/api/auth/logout").header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(post("/api/auth/logout").header("Authorization", "Bearer " + token))
+                .andExpect(status().isUnauthorized());
+        org.junit.jupiter.api.Assertions.assertEquals(1, revokedTokenRepository.count());
+    }
+
+    @Test
+    void cleanupRetainsRecordsUntilTokenExpirationAndDeletesOnlyExpiredRows() {
+        revokedTokenRepository.save(new RevokedToken("expired-jti", java.time.Instant.now().minusSeconds(1)));
+        revokedTokenRepository.save(new RevokedToken("active-jti", java.time.Instant.now().plusSeconds(3600)));
+
+        org.junit.jupiter.api.Assertions.assertEquals(1, tokenRevocationService.cleanupExpiredBatch());
+        org.junit.jupiter.api.Assertions.assertFalse(revokedTokenRepository.existsById("expired-jti"));
+        org.junit.jupiter.api.Assertions.assertTrue(revokedTokenRepository.existsById("active-jti"));
     }
 
     @Test
@@ -162,12 +222,19 @@ class AuthControllerTest {
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder register(String name, String email, String password) {
         return post("/api/auth/register").contentType(MediaType.APPLICATION_JSON)
-                .content("{\"name\":\"" + name + "\",\"email\":\"" + email + "\",\"password\":\"" + password + "\"}");
+                .content("{\"name\":\"" + name + "\",\"email\":\"" + email + "\",\"password\":\"" + password + "\"}")
+                .with(request -> { request.setRemoteAddr(testClientIp()); return request; });
     }
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder login(String email, String password) {
         return post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
-                .content("{\"email\":\"" + email + "\",\"password\":\"" + password + "\"}");
+                .content("{\"email\":\"" + email + "\",\"password\":\"" + password + "\"}")
+                .with(request -> { request.setRemoteAddr(testClientIp()); return request; });
+    }
+
+    private static String testClientIp() {
+        return "198.18." + ThreadLocalRandom.current().nextInt(256) + "."
+                + ThreadLocalRandom.current().nextInt(1, 255);
     }
 
     private String registerAndGetToken(String name, String email) throws Exception {

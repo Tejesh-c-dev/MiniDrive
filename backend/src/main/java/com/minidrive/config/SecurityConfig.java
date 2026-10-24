@@ -1,6 +1,7 @@
 package com.minidrive.config;
 
 import com.minidrive.security.JwtAuthenticationFilter;
+import com.minidrive.security.RateLimitFilter;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -32,12 +33,15 @@ import org.springframework.web.cors.CorsConfigurationSource;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final RateLimitFilter rateLimitFilter;
     private final CorsConfigurationSource corsConfigurationSource;
 
     public SecurityConfig(
             JwtAuthenticationFilter jwtAuthenticationFilter,
+            RateLimitFilter rateLimitFilter,
             CorsConfigurationSource corsConfigurationSource) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.rateLimitFilter = rateLimitFilter;
         this.corsConfigurationSource = corsConfigurationSource;
     }
 
@@ -122,8 +126,10 @@ public class SecurityConfig {
                         .authenticated())
 
                 .addFilterBefore(
-                        jwtAuthenticationFilter,
+                        rateLimitFilter,
                         UsernamePasswordAuthenticationFilter.class);
+
+        http.addFilterAfter(jwtAuthenticationFilter, RateLimitFilter.class);
 
         return http.build();
     }

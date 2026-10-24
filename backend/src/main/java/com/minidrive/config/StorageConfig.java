@@ -2,6 +2,9 @@ package com.minidrive.config;
 
 import com.minidrive.storage.NodeStorageClient;
 import com.minidrive.storage.StorageNodeProperties;
+import com.minidrive.storage.ReplicationSpoolProperties;
+import com.minidrive.storage.ReplicationSpoolManager;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.minio.MinioClient;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -12,8 +15,14 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Configuration
-@EnableConfigurationProperties(StorageNodeProperties.class)
+@EnableConfigurationProperties({StorageNodeProperties.class, ReplicationSpoolProperties.class})
 public class StorageConfig {
+    @Bean(destroyMethod = "close")
+    ReplicationSpoolManager replicationSpoolManager(ReplicationSpoolProperties properties, MeterRegistry metrics,
+            @Value("${minidrive.storage.replication.enabled:false}") boolean enabled) {
+        return new ReplicationSpoolManager(properties, metrics, enabled);
+    }
+
     @Bean
     Map<String, NodeStorageClient> storageNodeClients(StorageNodeProperties properties,
             @Value("${minio.endpoint:http://localhost:9000}") String endpoint,

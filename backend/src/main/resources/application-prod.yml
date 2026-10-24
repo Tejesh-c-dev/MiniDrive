@@ -1,0 +1,47 @@
+# Production overrides only the values that must never inherit local defaults.
+# Supply credentials through the process environment or an orchestrator secret
+# injection mechanism; this repository does not select a secret manager.
+spring:
+  datasource:
+    url: ${DB_URL:}
+    username: ${DB_USERNAME:}
+    password: ${DB_PASSWORD:}
+  data:
+    redis:
+      host: ${REDIS_HOST:}
+      port: ${REDIS_PORT:0}
+
+jwt:
+  secret: ${JWT_SECRET:}
+
+minio:
+  endpoint: ${MINIO_ENDPOINT:}
+  access-key: ${MINIO_ACCESS_KEY:}
+  secret-key: ${MINIO_SECRET_KEY:}
+  bucket: ${MINIO_BUCKET:}
+
+minidrive:
+  cors:
+    allowed-origins: ${MINIDRIVE_CORS_ALLOWED_ORIGINS:}
+  rate-limit:
+    trust-proxy: ${MINIDRIVE_RATE_LIMIT_TRUST_PROXY:true}
+    trusted-proxies: ${MINIDRIVE_RATE_LIMIT_TRUSTED_PROXIES:}
+  storage:
+    nodes:
+      - id: primary
+        endpoint: ${MINIO_ENDPOINT:}
+        access-key: ${MINIO_ACCESS_KEY:}
+        secret-key: ${MINIO_SECRET_KEY:}
+        bucket: ${MINIO_BUCKET:}
+        enabled: true
+      - id: secondary
+        endpoint: ${MINIO_SECONDARY_ENDPOINT:}
+        access-key: ${MINIO_SECONDARY_ACCESS_KEY:}
+        secret-key: ${MINIO_SECONDARY_SECRET_KEY:}
+        bucket: ${MINIO_SECONDARY_BUCKET:}
+        enabled: ${MINIO_SECONDARY_ENABLED:false}
+
+# Only the actual socket peer is used by the rate limiter. Forwarded headers
+# are interpreted only by RateLimitService when that peer is in trusted-proxies.
+server:
+  forward-headers-strategy: none

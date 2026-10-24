@@ -46,3 +46,14 @@ export async function fetchCurrentUser(): Promise<CurrentUser> {
     throw toApiError(error);
   }
 }
+
+/** Revoke the access token currently being cleared from local storage. */
+export async function logout(token: string): Promise<void> {
+  try {
+    await apiClient.post('/api/auth/logout', undefined, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch (error: unknown) {
+    throw toApiError(error);
+  }
+}

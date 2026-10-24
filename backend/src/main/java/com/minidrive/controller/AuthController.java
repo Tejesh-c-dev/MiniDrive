@@ -6,6 +6,8 @@ import com.minidrive.dto.auth.RegisterRequest;
 import com.minidrive.entity.User;
 import com.minidrive.repository.UserRepository;
 import com.minidrive.service.AuthService;
+import com.minidrive.security.RateLimitService;
+import jakarta.servlet.http.HttpServletRequest;
 
 import jakarta.validation.Valid;
 
@@ -24,12 +26,15 @@ public class AuthController {
 
     private final AuthService authService;
     private final UserRepository userRepository;
+    private final RateLimitService rateLimitService;
 
     public AuthController(
             AuthService authService,
-            UserRepository userRepository) {
+            UserRepository userRepository,
+            RateLimitService rateLimitService) {
         this.authService = authService;
         this.userRepository = userRepository;
+        this.rateLimitService = rateLimitService;
     }
 
     @PostMapping("/register")
@@ -45,10 +50,22 @@ public class AuthController {
 
     @PostMapping("/login")
     public ResponseEntity<AuthResponse> login(
-            @Valid @RequestBody LoginRequest request) {
+            @Valid @RequestBody LoginRequest request,
+            HttpServletRequest servletRequest) {
+
+        rateLimitService.loginAccount(
+                (String) servletRequest.getAttribute("minidrive.rate-limit.ip"), request.getEmail());
 
         return ResponseEntity.ok(
                 authService.login(request));
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(
+            Authentication authentication,
+            @RequestHeader("Authorization") String authorizationHeader) {
+        authService.logout(authorizationHeader, authentication);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping("/me")

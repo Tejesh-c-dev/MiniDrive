@@ -97,9 +97,10 @@ public class FolderDeletionLifecycle {
     }
 
     /**
-     * Removes one file's metadata only after its current object key has been
-     * committed to the same durable cleanup manifest. Historical version
-     * objects intentionally remain under the existing retention policy.
+     * Removes one file's metadata only after its current, historical, and
+     * associated staging keys have been committed to the durable cleanup
+     * manifest. Version objects remain retained while their version rows live;
+     * explicit permanent file deletion retires the complete history.
      */
     @Transactional
     public UUID requestFile(UUID fileId, UUID ownerId) {
@@ -112,7 +113,19 @@ public class FolderDeletionLifecycle {
             throw new FolderDeletionInProgressException();
 
         FolderDeletionJob job = jobs.saveAndFlush(new FolderDeletionJob(UUID.randomUUID()));
-        objects.saveAndFlush(new FolderDeletionObject(job, file.getObjectKey()));
+        Set<String> manifest = new LinkedHashSet<>();
+        if (file.getObjectKey() != null) manifest.add(file.getObjectKey());
+        for (FileVersion version : versions.findByFileIdOrderByVersionNumberAsc(fileId))
+            if (version.getObjectKey() != null) manifest.add(version.getObjectKey());
+        // The file FK cascades to replacement upload sessions. Preserve their
+        // staging keys before deleting the file so cleanup cannot lose them.
+        for (UploadSession session : sessions.findAll()) {
+            if (session.getTargetFile() != null && session.getTargetFile().getId().equals(fileId))
+                for (UploadChunk chunk : chunks.findBySessionIdOrderByChunkIndexAsc(session.getId()))
+                    if (chunk.getStagingObjectKey() != null) manifest.add(chunk.getStagingObjectKey());
+        }
+        for (String key : manifest) objects.save(new FolderDeletionObject(job, key));
+        objects.flush();
         files.delete(file);
         files.flush();
         cache.evictAfterCommit();

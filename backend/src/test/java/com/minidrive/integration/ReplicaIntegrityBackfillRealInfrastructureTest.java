@@ -25,6 +25,15 @@ import static org.junit.jupiter.api.Assertions.*;
 class ReplicaIntegrityBackfillRealInfrastructureTest {
     @Test
     void legacySingleNodeObjectBackfillsThenDownloadsInReplicationMode() throws Exception {
+        assertEquals("jdbc:postgresql://127.0.0.1:55439/minidrive_it", System.getenv("DB_URL"));
+        assertEquals("md_it", System.getenv("DB_USERNAME"));
+        assertNotEquals("minidrive", System.getenv("DB_PASSWORD"));
+        assertEquals("http://127.0.0.1:9200", System.getenv("MINIO_ENDPOINT"));
+        assertEquals("http://127.0.0.1:9300", System.getenv("MINIO_SECONDARY_ENDPOINT"));
+        assertEquals("md_it_silo", System.getenv("MINIO_ACCESS_KEY"));
+        assertNotEquals("minioadmin", System.getenv("MINIO_SECRET_KEY"));
+        assertEquals("minidrive-it-primary", System.getenv("MINIO_BUCKET"));
+        assertEquals("minidrive-it-secondary", System.getenv("MINIO_SECONDARY_BUCKET"));
         String dbUrl = System.getProperty("minidrive.live-pg-minio.db-url",
                 System.getenv().getOrDefault("DB_URL", "jdbc:postgresql://127.0.0.1:55432/minidrive"));
         String dbUser = System.getProperty("minidrive.live-pg-minio.db-user",

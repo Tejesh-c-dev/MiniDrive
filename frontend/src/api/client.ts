@@ -49,8 +49,11 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error: unknown) => {
     if (axios.isAxiosError(error) && error.response?.status === 401) {
-      removeToken();
-      window.dispatchEvent(new Event('minidrive:unauthorized'));
+      const isLogoutRequest = error.config?.url?.replace(/^\//, '') === 'api/auth/logout';
+      if (!isLogoutRequest) {
+        removeToken();
+        window.dispatchEvent(new Event('minidrive:unauthorized'));
+      }
     }
     return Promise.reject(error);
   },

@@ -24,6 +24,7 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.HexFormat;
 import java.util.Set;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -40,6 +41,7 @@ public class RoutingStorageService implements StorageService {
     private final MeterRegistry metrics;
     private final boolean replicationEnabled;
     private final String primaryNodeId;
+    private final ReplicationSpoolManager spoolManager;
     private final Set<String> repairs = ConcurrentHashMap.newKeySet();
     private TransactionTemplate deletionIntentTransaction;
     private final Map<String, AtomicInteger> nodeHealth = new ConcurrentHashMap<>();
@@ -51,13 +53,15 @@ public class RoutingStorageService implements StorageService {
             StorageNodeSelector selector,
             MeterRegistry metrics,
             @Value("${minidrive.storage.replication.enabled:false}") boolean replicationEnabled,
-            @Value("${minidrive.storage.replication.primary-node-id:primary}") String primaryNodeId) {
+            @Value("${minidrive.storage.replication.primary-node-id:primary}") String primaryNodeId,
+            ReplicationSpoolManager spoolManager) {
         this.jdbc = jdbc;
         this.nodes = nodes;
         this.selector = selector;
         this.metrics = metrics;
         this.replicationEnabled = replicationEnabled;
         this.primaryNodeId = primaryNodeId;
+        this.spoolManager = spoolManager;
         nodes.keySet().forEach(nodeId -> {
             AtomicInteger status = new AtomicInteger(-1);
             nodeHealth.put(nodeId, status);
@@ -97,6 +101,20 @@ public class RoutingStorageService implements StorageService {
 
     /** Compatibility constructor used by unit tests and non-Spring callers. */
     public RoutingStorageService(JdbcTemplate jdbc, Map<String, NodeStorageClient> nodes,
+                                 StorageNodeSelector selector, MeterRegistry metrics,
+                                 boolean replicationEnabled, String primaryNodeId) {
+        this(jdbc, nodes, selector, metrics, replicationEnabled, primaryNodeId,
+                compatibilitySpoolManager(metrics, replicationEnabled));
+    }
+
+    private static ReplicationSpoolManager compatibilitySpoolManager(MeterRegistry metrics, boolean enabled) {
+        ReplicationSpoolProperties policy = new ReplicationSpoolProperties();
+        if (enabled) try { policy.setDirectory(Files.createTempDirectory("minidrive-repl-test-").resolve("spool")); }
+        catch (IOException e) { throw new IllegalStateException("Unable to create isolated spool directory", e); }
+        return new ReplicationSpoolManager(policy, metrics, enabled);
+    }
+
+    public RoutingStorageService(JdbcTemplate jdbc, Map<String, NodeStorageClient> nodes,
                                  StorageNodeSelector selector, MeterRegistry metrics) {
         this(jdbc, nodes, selector, metrics, false, "primary");
     }
@@ -129,23 +147,13 @@ public class RoutingStorageService implements StorageService {
             uploadLegacy(key, input, size, type);
             return;
         }
-        Path staged = null;
-        try {
-            staged = Files.createTempFile("minidrive-replication-", ".object");
-            MessageDigest digest = sha256();
-            long copied = copy(input, Files.newOutputStream(staged), digest);
-            if (copied != size) throw new StorageException("Uploaded object size does not match metadata");
-            String checksum = HexFormat.of().formatHex(digest.digest());
+        try (ReplicationSpoolManager.Spool spool = spoolManager.spool(input, size, sha256())) {
             String primary = primaryNodeId;
             upsertLocation(key, primary);
-            uploadAndRecord(key, staged, primary, size, type, checksum, "primary");
+            uploadAndRecord(key, spool.path(), primary, size, type, spool.checksum(), "primary");
             for (String nodeId : nodes.keySet()) {
-                if (!nodeId.equals(primary)) replicate(key, staged, nodeId, size, type, checksum);
+                if (!nodeId.equals(primary)) replicate(key, spool.path(), nodeId, size, type, spool.checksum());
             }
-        } catch (IOException e) {
-            throw new StorageException("Unable to stage uploaded file", e);
-        } finally {
-            deleteTemp(staged);
         }
     }
 
@@ -197,6 +205,14 @@ public class RoutingStorageService implements StorageService {
     @Override
     public void delete(String key) {
         withKeyLock(key, () -> { deleteLocked(key); return null; });
+    }
+
+    /** Checks only the authoritative registered node; never falls back and mistakes an outage for absence. */
+    @Override
+    public Optional<Boolean> exists(String key) {
+        String node = existing(key);
+        if (node == null) return Optional.empty();
+        return Optional.of(client(node).exists(key));
     }
 
     private void deleteLocked(String key) {

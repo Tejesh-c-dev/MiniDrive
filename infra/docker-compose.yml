@@ -1,3 +1,6 @@
+# Local development infrastructure only. This file has development credentials,
+# loopback host port publications, and no backend, frontend, TLS ingress, or
+# production persistence/monitoring policy. Do not use it as a production stack.
 services:
 
   postgres:

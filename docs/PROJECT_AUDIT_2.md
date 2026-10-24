@@ -1,4 +1,400 @@
-# MiniDrive — Repository Audit & Next-Session Context
+# MiniDrive — Final Live Validation of MD-001 and MD-004
+
+## Objective
+
+Continue from the current repository state. The isolated live-integration environment has been implemented and successfully provisioned with dedicated PostgreSQL and two Silo-compatible storage nodes.
+
+The remaining acceptance gaps are:
+
+- **MD-001:** End-to-end recursive folder deletion using real PostgreSQL and Silo, including failure and recovery of the persisted deletion manifest.
+- **MD-004:** A real PostgreSQL transaction failure after successful remote object deletion, followed by safe retry and recovery.
+- Folder-deletion versus upload-cleanup concurrency remains insufficiently verified.
+- Replica repair racing intentional deletion needs live verification where the isolated replication setup supports it.
+
+The infrastructure setup is already complete. Do not redesign it or repeat already successful standalone tests unnecessarily.
+
+Do not start MD-010. Do not implement automatic orphan collection or frontend delete controls.
+
+## 1. Preserve the current workspace
+
+Before editing:
+
+1. Run `git status --short` and inspect both staged and unstaged changes.
+2. Preserve all existing MD-007, MD-008, and MD-009 modifications.
+3. Preserve the eight pre-existing staged cleanup-journal entries and their staging state.
+4. Inspect the current live-test infrastructure in `infra/live-test-compose.yml`, `infra/live-test-up.ps1`, `infra/live-test-down.ps1`, and `infra/LIVE-INTEGRATION.md`.
+5. Review the current implementations of `FolderDeletionLifecycle`, `FileService`, the deletion manifest/job entities, `CleanupIntentJournal`, `UploadSessionService`, and `RoutingStorageService`.
+6. Inspect every test's resource-cleanup behavior before executing it.
+
+Use only the dedicated disposable PostgreSQL and Silo resources. Never run destructive tests against the persistent development services.
+
+## 2. MD-001 — Exercise recursive folder deletion end to end
+
+Add or extend a real-infrastructure integration test using the actual application services, PostgreSQL, and Silo-compatible storage.
+
+Create a nested folder tree containing:
+
+- A file with current content.
+- A file with multiple retained historical versions.
+- An upload session with multiple staged chunks.
+- Unrelated files and objects outside the subtree.
+
+Assert the initial PostgreSQL metadata and physical Silo objects before requesting deletion.
+
+Then exercise the actual recursive deletion lifecycle.
+
+Verify:
+
+1. The deletion manifest contains all current, historical, and applicable staging keys.
+2. The required deletion state and manifest are durably committed before physical deletion begins.
+3. All intended objects are deleted after successful processing.
+4. Unrelated objects and metadata remain untouched.
+5. Missing objects are handled idempotently.
+6. A storage failure partway through deletion retains the manifest and sufficient state for retry.
+7. After storage recovery, a subsequent worker completes cleanup.
+8. A database failure before the deletion-request transaction commits does not trigger untracked physical deletions or leave a partially committed request.
+9. A failure in a later metadata-finalization transaction does not erase an already committed manifest.
+10. Repeated deletion or replay does not resurrect retired content.
+11. File-version and upload-session behavior remains consistent with the established deletion semantics.
+
+### Transaction-boundary requirements
+
+Inspect the actual transaction boundaries before choosing the failure-injection point.
+
+Do not assert that a manifest survives a rollback of the exact transaction that created it. Instead, verify the correct invariants for each boundary:
+
+- If the request transaction rolls back before committing the manifest, no external deletion should start.
+- Once a manifest is committed, a subsequent storage or finalization failure must not lose that recovery record.
+
+Use independent PostgreSQL connections where appropriate. Make failure injection deterministic and scoped to the disposable test database.
+
+## 3. MD-004 — Inject PostgreSQL failure after real Silo deletion
+
+Add a live integration test covering the specific transaction failure window that remains unverified.
+
+Inspect the current file deletion implementation and identify the database operation that occurs after successful remote object deletion.
+
+Prefer a controlled, test-only PostgreSQL trigger or another deterministic, isolated mechanism that causes that specific operation to fail after the physical delete has succeeded.
+
+Test this sequence:
+
+1. Create a file with current content and multiple historical versions.
+2. Request deletion through the actual application lifecycle.
+3. Confirm the deletion manifest is durably committed.
+4. Allow the real storage adapter to successfully delete a selected intended object.
+5. Inject a PostgreSQL failure when the corresponding deletion state or finalization metadata is updated.
+6. Verify that PostgreSQL rolls back the failed transaction.
+7. Verify that the intended object is physically absent while the committed manifest still provides a recovery path.
+8. Restore normal database operation and rerun the cleanup worker.
+9. Verify that already-missing objects are treated idempotently and remaining objects are removed.
+10. Verify the deletion job eventually reaches its intended terminal state.
+11. Verify no unrelated file, retained live content, or independently referenced object is deleted.
+
+Inspect whether the current implementation uses compensation or durable manifest-based retry at this boundary.
+
+If compensation is actually part of the current path, test its failure and recovery. If the durable deletion manifest is the recovery mechanism, verify that directly rather than introducing artificial compensating writes.
+
+Do not replace the actual storage or PostgreSQL operation with a mock for this test.
+
+A database failure before remote deletion is not sufficient evidence for this acceptance criterion.
+
+## 4. Folder deletion versus expired-upload cleanup
+
+Use two independent application workers and actual PostgreSQL connections.
+
+Create a folder subtree with an eligible expired upload session and staged chunks.
+
+Race recursive folder deletion against the MD-007 expired-session cleanup worker.
+
+Verify:
+
+- The deletion manifests and upload-cleanup state remain consistent.
+- No staged-object identifiers needed for recovery are lost.
+- Duplicate deletes converge safely.
+- A failure in either worker remains retryable.
+- No valid upload content outside the deleted subtree is removed.
+- No worker finalizes metadata using stale assumptions about the other worker's progress.
+
+Use deterministic barriers or other test synchronization instead of timing-dependent sleeps wherever practical.
+
+Test the relevant database state after both workers finish, and after a controlled failure and retry.
+
+## 5. Replication repair versus intentional deletion
+
+Reuse the existing isolated two-node storage setup if it supports the required replication configuration.
+
+Create an object that has the appropriate routing and replica-state records.
+
+Race intentional deletion against the actual repair workflow.
+
+Verify:
+
+- A deletion tombstone is respected by repair.
+- A deliberately retired object is not resurrected.
+- A genuinely failed deletion remains distinguishable from successful deletion.
+- Retries after transient node failure converge safely.
+- Unrelated healthy objects remain available.
+
+Use real PostgreSQL and both Silo nodes for this scenario. Do not infer this guarantee solely from a unit test of `RoutingStorageService`.
+
+If the current isolated configuration cannot safely exercise the race, report that limitation explicitly instead of modifying shared development storage.
+
+## 6. Test isolation and cleanup
+
+Use the existing project-scoped live-test setup and teardown.
+
+Before executing a test, confirm the database connection and both storage endpoints belong to the isolated test project.
+
+If the test requires stopping PostgreSQL, verify that the identified container is the disposable test container and that the existing explicit safety gate is enabled.
+
+Never stop persistent development services.
+
+Ensure failure-injection triggers, test records, and test-owned objects are removed or cleaned up safely after the test. Teardown must affect only the disposable project.
+
+## 7. Verification
+
+Run the focused new live tests first, then the relevant existing deletion, upload-cleanup, routing-deletion, and version-history suites.
+
+Run the broader backend suite after the targeted tests if practical.
+
+Report each evidence category separately:
+
+- H2 and mocked-storage tests.
+- Standalone Silo tests.
+- Real PostgreSQL deletion tests.
+- Real PostgreSQL plus Silo deletion tests.
+- Independent-worker concurrency tests.
+- Replication repair tests.
+
+For each command, report actual test counts, passes, failures, errors, and skips. A compiled test or skipped opt-in suite is not a live verification result.
+
+Run:
+
+- `git diff --check`
+- `git diff --cached --check`
+
+Inspect the final staged and unstaged diff. Preserve the existing staging state.
+
+Do not modify historical migrations. Introduce a new migration only if a demonstrated application-code correction requires a schema change.
+
+## 8. Required final report
+
+Provide:
+
+1. Root cause and current implementation evidence for each tested failure window.
+2. Exact files modified.
+3. MD-001 recursive-deletion results against real PostgreSQL and Silo.
+4. MD-004 results showing PostgreSQL rollback after successful remote deletion.
+5. Failure and retry results for committed deletion manifests.
+6. Folder-deletion/upload-cleanup concurrency results.
+7. Replication-repair race results.
+8. Exact commands and actual test counts.
+9. Remaining risks and unverified scenarios.
+10. Separate PASS / PARTIAL / BLOCKED verdicts for MD-001 and MD-004.
+
+Do not claim that a mocked transaction failure proves real PostgreSQL rollback behavior.
+
+Do not close a finding merely because the broader suite passes.
+
+Do not start MD-010 or destructive orphan collection as part of this task.# MiniDrive — Final Live Validation of MD-001 and MD-004
+
+## Objective
+
+Continue from the current repository state. The isolated live-integration environment has been implemented and successfully provisioned with dedicated PostgreSQL and two Silo-compatible storage nodes.
+
+The remaining acceptance gaps are:
+
+- **MD-001:** End-to-end recursive folder deletion using real PostgreSQL and Silo, including failure and recovery of the persisted deletion manifest.
+- **MD-004:** A real PostgreSQL transaction failure after successful remote object deletion, followed by safe retry and recovery.
+- Folder-deletion versus upload-cleanup concurrency remains insufficiently verified.
+- Replica repair racing intentional deletion needs live verification where the isolated replication setup supports it.
+
+The infrastructure setup is already complete. Do not redesign it or repeat already successful standalone tests unnecessarily.
+
+Do not start MD-010. Do not implement automatic orphan collection or frontend delete controls.
+
+## 1. Preserve the current workspace
+
+Before editing:
+
+1. Run `git status --short` and inspect both staged and unstaged changes.
+2. Preserve all existing MD-007, MD-008, and MD-009 modifications.
+3. Preserve the eight pre-existing staged cleanup-journal entries and their staging state.
+4. Inspect the current live-test infrastructure in `infra/live-test-compose.yml`, `infra/live-test-up.ps1`, `infra/live-test-down.ps1`, and `infra/LIVE-INTEGRATION.md`.
+5. Review the current implementations of `FolderDeletionLifecycle`, `FileService`, the deletion manifest/job entities, `CleanupIntentJournal`, `UploadSessionService`, and `RoutingStorageService`.
+6. Inspect every test's resource-cleanup behavior before executing it.
+
+Use only the dedicated disposable PostgreSQL and Silo resources. Never run destructive tests against the persistent development services.
+
+## 2. MD-001 — Exercise recursive folder deletion end to end
+
+Add or extend a real-infrastructure integration test using the actual application services, PostgreSQL, and Silo-compatible storage.
+
+Create a nested folder tree containing:
+
+- A file with current content.
+- A file with multiple retained historical versions.
+- An upload session with multiple staged chunks.
+- Unrelated files and objects outside the subtree.
+
+Assert the initial PostgreSQL metadata and physical Silo objects before requesting deletion.
+
+Then exercise the actual recursive deletion lifecycle.
+
+Verify:
+
+1. The deletion manifest contains all current, historical, and applicable staging keys.
+2. The required deletion state and manifest are durably committed before physical deletion begins.
+3. All intended objects are deleted after successful processing.
+4. Unrelated objects and metadata remain untouched.
+5. Missing objects are handled idempotently.
+6. A storage failure partway through deletion retains the manifest and sufficient state for retry.
+7. After storage recovery, a subsequent worker completes cleanup.
+8. A database failure before the deletion-request transaction commits does not trigger untracked physical deletions or leave a partially committed request.
+9. A failure in a later metadata-finalization transaction does not erase an already committed manifest.
+10. Repeated deletion or replay does not resurrect retired content.
+11. File-version and upload-session behavior remains consistent with the established deletion semantics.
+
+### Transaction-boundary requirements
+
+Inspect the actual transaction boundaries before choosing the failure-injection point.
+
+Do not assert that a manifest survives a rollback of the exact transaction that created it. Instead, verify the correct invariants for each boundary:
+
+- If the request transaction rolls back before committing the manifest, no external deletion should start.
+- Once a manifest is committed, a subsequent storage or finalization failure must not lose that recovery record.
+
+Use independent PostgreSQL connections where appropriate. Make failure injection deterministic and scoped to the disposable test database.
+
+## 3. MD-004 — Inject PostgreSQL failure after real Silo deletion
+
+Add a live integration test covering the specific transaction failure window that remains unverified.
+
+Inspect the current file deletion implementation and identify the database operation that occurs after successful remote object deletion.
+
+Prefer a controlled, test-only PostgreSQL trigger or another deterministic, isolated mechanism that causes that specific operation to fail after the physical delete has succeeded.
+
+Test this sequence:
+
+1. Create a file with current content and multiple historical versions.
+2. Request deletion through the actual application lifecycle.
+3. Confirm the deletion manifest is durably committed.
+4. Allow the real storage adapter to successfully delete a selected intended object.
+5. Inject a PostgreSQL failure when the corresponding deletion state or finalization metadata is updated.
+6. Verify that PostgreSQL rolls back the failed transaction.
+7. Verify that the intended object is physically absent while the committed manifest still provides a recovery path.
+8. Restore normal database operation and rerun the cleanup worker.
+9. Verify that already-missing objects are treated idempotently and remaining objects are removed.
+10. Verify the deletion job eventually reaches its intended terminal state.
+11. Verify no unrelated file, retained live content, or independently referenced object is deleted.
+
+Inspect whether the current implementation uses compensation or durable manifest-based retry at this boundary.
+
+If compensation is actually part of the current path, test its failure and recovery. If the durable deletion manifest is the recovery mechanism, verify that directly rather than introducing artificial compensating writes.
+
+Do not replace the actual storage or PostgreSQL operation with a mock for this test.
+
+A database failure before remote deletion is not sufficient evidence for this acceptance criterion.
+
+## 4. Folder deletion versus expired-upload cleanup
+
+Use two independent application workers and actual PostgreSQL connections.
+
+Create a folder subtree with an eligible expired upload session and staged chunks.
+
+Race recursive folder deletion against the MD-007 expired-session cleanup worker.
+
+Verify:
+
+- The deletion manifests and upload-cleanup state remain consistent.
+- No staged-object identifiers needed for recovery are lost.
+- Duplicate deletes converge safely.
+- A failure in either worker remains retryable.
+- No valid upload content outside the deleted subtree is removed.
+- No worker finalizes metadata using stale assumptions about the other worker's progress.
+
+Use deterministic barriers or other test synchronization instead of timing-dependent sleeps wherever practical.
+
+Test the relevant database state after both workers finish, and after a controlled failure and retry.
+
+## 5. Replication repair versus intentional deletion
+
+Reuse the existing isolated two-node storage setup if it supports the required replication configuration.
+
+Create an object that has the appropriate routing and replica-state records.
+
+Race intentional deletion against the actual repair workflow.
+
+Verify:
+
+- A deletion tombstone is respected by repair.
+- A deliberately retired object is not resurrected.
+- A genuinely failed deletion remains distinguishable from successful deletion.
+- Retries after transient node failure converge safely.
+- Unrelated healthy objects remain available.
+
+Use real PostgreSQL and both Silo nodes for this scenario. Do not infer this guarantee solely from a unit test of `RoutingStorageService`.
+
+If the current isolated configuration cannot safely exercise the race, report that limitation explicitly instead of modifying shared development storage.
+
+## 6. Test isolation and cleanup
+
+Use the existing project-scoped live-test setup and teardown.
+
+Before executing a test, confirm the database connection and both storage endpoints belong to the isolated test project.
+
+If the test requires stopping PostgreSQL, verify that the identified container is the disposable test container and that the existing explicit safety gate is enabled.
+
+Never stop persistent development services.
+
+Ensure failure-injection triggers, test records, and test-owned objects are removed or cleaned up safely after the test. Teardown must affect only the disposable project.
+
+## 7. Verification
+
+Run the focused new live tests first, then the relevant existing deletion, upload-cleanup, routing-deletion, and version-history suites.
+
+Run the broader backend suite after the targeted tests if practical.
+
+Report each evidence category separately:
+
+- H2 and mocked-storage tests.
+- Standalone Silo tests.
+- Real PostgreSQL deletion tests.
+- Real PostgreSQL plus Silo deletion tests.
+- Independent-worker concurrency tests.
+- Replication repair tests.
+
+For each command, report actual test counts, passes, failures, errors, and skips. A compiled test or skipped opt-in suite is not a live verification result.
+
+Run:
+
+- `git diff --check`
+- `git diff --cached --check`
+
+Inspect the final staged and unstaged diff. Preserve the existing staging state.
+
+Do not modify historical migrations. Introduce a new migration only if a demonstrated application-code correction requires a schema change.
+
+## 8. Required final report
+
+Provide:
+
+1. Root cause and current implementation evidence for each tested failure window.
+2. Exact files modified.
+3. MD-001 recursive-deletion results against real PostgreSQL and Silo.
+4. MD-004 results showing PostgreSQL rollback after successful remote deletion.
+5. Failure and retry results for committed deletion manifests.
+6. Folder-deletion/upload-cleanup concurrency results.
+7. Replication-repair race results.
+8. Exact commands and actual test counts.
+9. Remaining risks and unverified scenarios.
+10. Separate PASS / PARTIAL / BLOCKED verdicts for MD-001 and MD-004.
+
+Do not claim that a mocked transaction failure proves real PostgreSQL rollback behavior.
+
+Do not close a finding merely because the broader suite passes.
+
+Do not start MD-010 or destructive orphan collection as part of this task.# MiniDrive — Repository Audit & Next-Session Context
 
 **Audit date:** 2026-10-23  
 **Repository reviewed:** [Tejesh-c-dev/MiniDrive](https://github.com/Tejesh-c-dev/MiniDrive)  
@@ -28,14 +424,14 @@ The engineering ambition is real. However, several reliability capabilities are 
 
 ### Overall maturity (subjective, source-based)
 
-| Area | Assessment |
-|---|---|
-| Core backend capabilities | Substantial; many source paths are implemented |
-| Correctness and external-store consistency | Important gaps remain |
-| Distributed replication | Implemented in code, optional/off by default; migration and delete-state issues require attention |
-| Frontend completeness | Core drive exists, but important controls and polished user journeys are missing |
-| Observability | Metrics/configuration exist; deployment and resource visibility are incomplete |
-| Production readiness | **Not established** by this review |
+| Area                                       | Assessment                                                                                        |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| Core backend capabilities                  | Substantial; many source paths are implemented                                                    |
+| Correctness and external-store consistency | Important gaps remain                                                                             |
+| Distributed replication                    | Implemented in code, optional/off by default; migration and delete-state issues require attention |
+| Frontend completeness                      | Core drive exists, but important controls and polished user journeys are missing                  |
+| Observability                              | Metrics/configuration exist; deployment and resource visibility are incomplete                    |
+| Production readiness                       | **Not established** by this review                                                                |
 
 ---
 
@@ -66,16 +462,16 @@ A GitHub integration write attempt was denied, so this report is provided as a s
 
 ### 3.1 Runtime components
 
-| Component | Role | Evidence / notes |
-|---|---|---|
-| Backend | Spring Boot 4.1.1, Java 17, REST API, Spring Security, JPA/Hibernate, Flyway | `backend/pom.xml`; `backend/src/main/resources/application.yml` |
-| Frontend | React 19, TypeScript, Vite, React Router, Axios, Tailwind CSS 4 | `frontend/package.json` |
-| PostgreSQL | Authoritative metadata, user/folder/file/version/permission/share/upload records | `infra/docker-compose.yml`; `backend/src/main/resources/db/migration/` |
-| Redis | Derived file-listing cache and generation-token namespace; cache-only by design | `infra/docker-compose.yml`; `FileListingCache.java`; `ListingCacheGeneration.java` |
-| Object storage | Silo, MinIO-compatible S3 storage; primary plus optional secondary | `infra/docker-compose.yml`; `StorageConfig.java`; `RoutingStorageService.java` |
-| Metrics | Actuator and Micrometer/Prometheus registry | `application.yml`, `SecurityConfig.java`, metrics package |
-| Load testing | k6 smoke/baseline/ramp/ramp10 script, local-only target | `infra/load-testing/minidrive.js`, `infra/load-testing/README.md` |
-| Grafana | Dashboard/provisioning files exist; not a Grafana Compose service | `infra/grafana/`; HLD “Known Limitations” |
+| Component      | Role                                                                             | Evidence / notes                                                                   |
+| -------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Backend        | Spring Boot 4.1.1, Java 17, REST API, Spring Security, JPA/Hibernate, Flyway     | `backend/pom.xml`; `backend/src/main/resources/application.yml`                    |
+| Frontend       | React 19, TypeScript, Vite, React Router, Axios, Tailwind CSS 4                  | `frontend/package.json`                                                            |
+| PostgreSQL     | Authoritative metadata, user/folder/file/version/permission/share/upload records | `infra/docker-compose.yml`; `backend/src/main/resources/db/migration/`             |
+| Redis          | Derived file-listing cache and generation-token namespace; cache-only by design  | `infra/docker-compose.yml`; `FileListingCache.java`; `ListingCacheGeneration.java` |
+| Object storage | Silo, MinIO-compatible S3 storage; primary plus optional secondary               | `infra/docker-compose.yml`; `StorageConfig.java`; `RoutingStorageService.java`     |
+| Metrics        | Actuator and Micrometer/Prometheus registry                                      | `application.yml`, `SecurityConfig.java`, metrics package                          |
+| Load testing   | k6 smoke/baseline/ramp/ramp10 script, local-only target                          | `infra/load-testing/minidrive.js`, `infra/load-testing/README.md`                  |
+| Grafana        | Dashboard/provisioning files exist; not a Grafana Compose service                | `infra/grafana/`; HLD “Known Limitations”                                          |
 
 ### 3.2 High-level request path
 
@@ -114,34 +510,34 @@ The diagram describes the source-defined architecture, not a runtime observation
 
 Statuses below describe the repository evidence inspected, not a live acceptance test.
 
-| Feature | Source-level status | Notes / limits |
-|---|---|---|
-| Registration/login/current-user | Implemented in source | JWT-based; not runtime-tested in this review |
-| JWT-authenticated REST API | Implemented in source | 24-hour access token; no refresh-token rotation/revocation implementation |
-| File metadata create/list/get/update | Implemented in source | Metadata-only records can exist without content; be careful not to confuse metadata with actual stored bytes |
-| Single-shot upload/download | Implemented in source | Storage and DB side effects are not atomic; compensation can fail |
-| Content replacement | Implemented in source | Creates fresh storage key and version record; concurrency/failure behavior needs integration validation |
-| File version history/download/restore | Implemented in source | Restore makes a new version; no safe historical-object garbage collector found |
-| File delete API | Backend implemented | No delete action in current Drive UI; cross-store failure window exists; old version objects are retained |
-| Folder create/list/get/rename/delete | Backend implemented | Database cascade on delete does not clean Silo objects |
-| Viewer/Editor/Owner file permissions | Implemented in source | Direct file-scoped permissions; no evidence of inherited folder permissions |
-| Public share links | Implemented in source | Raw token returned once, hash persisted, expiry/revoke checked; URL tokens and rate limiting deserve security review |
-| Resumable uploads | Substantial implementation | 5 GiB max, 5 MiB chunk, 10,000 chunk limit, 24-hour session TTL, checksum/idempotency paths; expiry cleanup and differing-payload retry edge remain |
-| Storage routing | Implemented in source | Single-node mode uses recorded/selected location; health is not used for reads in legacy mode |
-| Two-node replication/fallback/repair | Implemented but **disabled by default** | Existing-object replica metadata backfill and replication-enabled delete path need fixes/verification |
-| Redis file-listing cache | Implemented in source | Generation-based invalidation; cache remains derived data; behavior during real Redis failure not run here |
-| Request correlation/structured logging/metrics | Code/configuration exists | Runtime exposure and completeness not independently tested |
-| Prometheus/k6 performance artifacts | Scripts and report exist | Limited local tests; no resumable workload in recorded report; no DB/Redis/storage exporters for resource use |
-| Trash / soft-delete / restore-from-trash | Not implemented in inspected source/docs | Empty placeholder classes; no deleted/trashed lifecycle established |
-| User profile service endpoints | Not implemented in inspected source/docs | Empty placeholder classes; `/api/auth/me` is separate |
-| Refresh-token rotation | Not implemented | Empty scaffolding/migration noted in HLD/LLD |
-| Direct-share entity flow | Not implemented | Do not confuse this with working public share-link flow |
-| File/folder delete controls in UI | Missing | Drive page comment explicitly says delete arrives later; frontend API modules have no delete helpers in inspected code |
-| Homepage/auth-aware navbar | Incomplete | `HomePage.tsx` displays old foundation placeholder; `RootLayout.tsx` always shows static links |
-| Search / sort / filtering / previews / drag-and-drop | Not found in inspected frontend | Product/UX gaps, not necessarily security defects |
-| “Shared with me” browser/list | Not found in inspected design | File listing is owner-scoped, so shared files are not discoverable through a dedicated shared listing |
-| Storage quotas | Not established | Not evidenced as implemented in inspected paths |
-| Self-contained deployment | Not implemented by Compose | Compose runs infrastructure, while backend/frontend/Prometheus are expected to run on host in documented local workflow; Grafana is configuration-only |
+| Feature                                              | Source-level status                      | Notes / limits                                                                                                                                         |
+| ---------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Registration/login/current-user                      | Implemented in source                    | JWT-based; not runtime-tested in this review                                                                                                           |
+| JWT-authenticated REST API                           | Implemented in source                    | 24-hour access token; no refresh-token rotation/revocation implementation                                                                              |
+| File metadata create/list/get/update                 | Implemented in source                    | Metadata-only records can exist without content; be careful not to confuse metadata with actual stored bytes                                           |
+| Single-shot upload/download                          | Implemented in source                    | Storage and DB side effects are not atomic; compensation can fail                                                                                      |
+| Content replacement                                  | Implemented in source                    | Creates fresh storage key and version record; concurrency/failure behavior needs integration validation                                                |
+| File version history/download/restore                | Implemented in source                    | Restore makes a new version; no safe historical-object garbage collector found                                                                         |
+| File delete API                                      | Backend implemented                      | No delete action in current Drive UI; cross-store failure window exists; old version objects are retained                                              |
+| Folder create/list/get/rename/delete                 | Backend implemented                      | Database cascade on delete does not clean Silo objects                                                                                                 |
+| Viewer/Editor/Owner file permissions                 | Implemented in source                    | Direct file-scoped permissions; no evidence of inherited folder permissions                                                                            |
+| Public share links                                   | Implemented in source                    | Raw token returned once, hash persisted, expiry/revoke checked; URL tokens and rate limiting deserve security review                                   |
+| Resumable uploads                                    | Substantial implementation               | 5 GiB max, 5 MiB chunk, 10,000 chunk limit, 24-hour session TTL, checksum/idempotency paths; expiry cleanup and differing-payload retry edge remain    |
+| Storage routing                                      | Implemented in source                    | Single-node mode uses recorded/selected location; health is not used for reads in legacy mode                                                          |
+| Two-node replication/fallback/repair                 | Implemented but **disabled by default**  | Existing-object replica metadata backfill and replication-enabled delete path need fixes/verification                                                  |
+| Redis file-listing cache                             | Implemented in source                    | Generation-based invalidation; cache remains derived data; behavior during real Redis failure not run here                                             |
+| Request correlation/structured logging/metrics       | Code/configuration exists                | Runtime exposure and completeness not independently tested                                                                                             |
+| Prometheus/k6 performance artifacts                  | Scripts and report exist                 | Limited local tests; no resumable workload in recorded report; no DB/Redis/storage exporters for resource use                                          |
+| Trash / soft-delete / restore-from-trash             | Not implemented in inspected source/docs | Empty placeholder classes; no deleted/trashed lifecycle established                                                                                    |
+| User profile service endpoints                       | Not implemented in inspected source/docs | Empty placeholder classes; `/api/auth/me` is separate                                                                                                  |
+| Refresh-token rotation                               | Not implemented                          | Empty scaffolding/migration noted in HLD/LLD                                                                                                           |
+| Direct-share entity flow                             | Not implemented                          | Do not confuse this with working public share-link flow                                                                                                |
+| File/folder delete controls in UI                    | Missing                                  | Drive page comment explicitly says delete arrives later; frontend API modules have no delete helpers in inspected code                                 |
+| Homepage/auth-aware navbar                           | Incomplete                               | `HomePage.tsx` displays old foundation placeholder; `RootLayout.tsx` always shows static links                                                         |
+| Search / sort / filtering / previews / drag-and-drop | Not found in inspected frontend          | Product/UX gaps, not necessarily security defects                                                                                                      |
+| “Shared with me” browser/list                        | Not found in inspected design            | File listing is owner-scoped, so shared files are not discoverable through a dedicated shared listing                                                  |
+| Storage quotas                                       | Not established                          | Not evidenced as implemented in inspected paths                                                                                                        |
+| Self-contained deployment                            | Not implemented by Compose               | Compose runs infrastructure, while backend/frontend/Prometheus are expected to run on host in documented local workflow; Grafana is configuration-only |
 
 ---
 
@@ -407,12 +803,12 @@ A prior supplied audit report stated 214 backend tests and 55 frontend tests pas
 
 The repository includes `artifacts/phase13/REPORT.md`, which reports these successful local profiles from 2026-10-22. They are transcribed from the artifact and were not reproduced here.
 
-| Profile | Reported concurrency | Requests/s | HTTP latency p95 / p99 | HTTP failures | Key limitation |
-|---|---:|---:|---:|---:|---|
-| Smoke | 1 VU | 19.38 | 97.57 / 108.21 ms | 0% | One iteration; not a capacity test |
-| Baseline | 2 VUs | 66.51 | 38.62 / 46.69 ms | 0% | 64 KiB files; single-node storage |
-| Ramp | 1→5 VUs | 100.52 | 43.44 / 52.23 ms | 0% | Controlled ramp; small fixtures |
-| Ramp10 | 1→10 VUs | 112.13 | 67.74 / 88.38 ms | 0% | Host CPU sample peaked at 97.9% |
+| Profile  | Reported concurrency | Requests/s | HTTP latency p95 / p99 | HTTP failures | Key limitation                     |
+| -------- | -------------------: | ---------: | ---------------------: | ------------: | ---------------------------------- |
+| Smoke    |                 1 VU |      19.38 |      97.57 / 108.21 ms |            0% | One iteration; not a capacity test |
+| Baseline |                2 VUs |      66.51 |       38.62 / 46.69 ms |            0% | 64 KiB files; single-node storage  |
+| Ramp     |              1→5 VUs |     100.52 |       43.44 / 52.23 ms |            0% | Controlled ramp; small fixtures    |
+| Ramp10   |             1→10 VUs |     112.13 |       67.74 / 88.38 ms |            0% | Host CPU sample peaked at 97.9%    |
 
 Reported controls/results:
 
@@ -553,6 +949,7 @@ Use this section as the compact handoff for a coding agent.
 **Phase: Storage Lifecycle Correctness & Reconciliation.** Keep scope narrow; do not redesign the whole application.
 
 Recommended sequence:
+
 1. Write regression tests for the existing replication-enabled delete bug and folder deletion orphan case.
 2. Design deletion transitions that remain recoverable across PostgreSQL/object-store failures.
 3. Fix replica-state removal/marking and prevent repair of intentionally deleted keys.
@@ -588,8 +985,8 @@ Key sources inspected (paths are repository-relative; line references refer to t
 - [UploadSessionService.java](https://github.com/Tejesh-c-dev/MiniDrive/blob/main/backend/src/main/java/com/minidrive/service/UploadSessionService.java) — session/chunk lifecycle and idempotency, especially lines 250–286, 332–424, 774–804.
 - [FileMetadataUpdateRequest.java](https://github.com/Tejesh-c-dev/MiniDrive/blob/main/backend/src/main/java/com/minidrive/dto/file/FileMetadataUpdateRequest.java) — editable metadata request fields.
 - [RoutingStorageService.java](https://github.com/Tejesh-c-dev/MiniDrive/blob/main/backend/src/main/java/com/minidrive/storage/RoutingStorageService.java) — replication upload/download/delete/repair, especially lines 90–182 and 209–333.
-- [V15__create_object_locations.sql](https://github.com/Tejesh-c-dev/MiniDrive/blob/main/backend/src/main/resources/db/migration/V15__create_object_locations.sql) — location backfill only.
-- [V16__create_object_replicas.sql](https://github.com/Tejesh-c-dev/MiniDrive/blob/main/backend/src/main/resources/db/migration/V16__create_object_replicas.sql) — replica-state schema.
+- [V15\_\_create_object_locations.sql](https://github.com/Tejesh-c-dev/MiniDrive/blob/main/backend/src/main/resources/db/migration/V15__create_object_locations.sql) — location backfill only.
+- [V16\_\_create_object_replicas.sql](https://github.com/Tejesh-c-dev/MiniDrive/blob/main/backend/src/main/resources/db/migration/V16__create_object_replicas.sql) — replica-state schema.
 - [HomePage.tsx](https://github.com/Tejesh-c-dev/MiniDrive/blob/main/frontend/src/pages/HomePage.tsx) — stale foundation placeholder.
 - [RootLayout.tsx](https://github.com/Tejesh-c-dev/MiniDrive/blob/main/frontend/src/layouts/RootLayout.tsx) — static header links.
 - [DrivePage.tsx](https://github.com/Tejesh-c-dev/MiniDrive/blob/main/frontend/src/pages/DrivePage.tsx) — current drive UI and absence of delete handlers.

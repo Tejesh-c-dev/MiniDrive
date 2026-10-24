@@ -1,6 +1,91 @@
 # MiniDrive
 A mini version alternative for google drive
 
+## Production deployment boundary
+
+The repository does not provide a complete production deployment. The Compose
+file is for local development and starts PostgreSQL, Redis, primary and
+secondary Silo, and one-shot private-bucket initialization jobs. It does not
+start the Spring backend, React frontend, HTTPS ingress, or monitoring services.
+Its host ports bind to loopback (`55432`, `56379`, `9000`/`9001`, and
+`9100`/`9101`); PostgreSQL and both Silo nodes use named volumes
+(`postgres_data`, `minio_data`, and `minio_secondary_data`), while Redis has no
+persistent volume. Keep these dependencies on private networks in any deployment.
+The Redis service in this development file has no authentication, which is a
+separate hardening finding and is not a production Redis configuration.
+Redis authentication, replica temporary-disk limits, and portable Grafana
+deployment remain separate findings and are outside this deployment baseline.
+
+For production, run the backend with the Spring `prod` profile and supply the
+required variables listed below through the deployment environment or an
+orchestrator's secret injection facility. This repository does not select a
+cloud provider, secret manager, frontend hosting service, or proxy. Do not use
+the development Compose credentials or the development `.env.example` as
+production values. PostgreSQL, Redis, and Silo must be provisioned separately
+or via an operator-managed private network. The React frontend is built and
+hosted separately. Configure internal network rules so only the backend can
+reach its data services, and do not publish their administrative ports to the
+public internet. Use a least-privilege PostgreSQL service account and Silo
+credentials scoped to the buckets the application needs.
+
+Public HTTPS must terminate at an externally operated reverse proxy, load
+balancer, or equivalent ingress. TLS certificates, private keys, renewal, and
+expiry monitoring belong to that operator. The ingress forwards requests to the
+backend over a private, access-controlled network; use TLS on that hop when the
+network is not trusted. The backend does not provide public TLS in this
+repository. The production profile disables Spring forwarded-header processing.
+For MD-012 rate-limit client IPs, set `MINIDRIVE_RATE_LIMIT_TRUST_PROXY=true`
+and `MINIDRIVE_RATE_LIMIT_TRUSTED_PROXIES` to the ingress source IPs/CIDRs only.
+The ingress must remove client-supplied `X-Forwarded-For` and append the address
+it observed. The limiter uses the rightmost forwarded address only when the
+socket peer matches that allowlist; arbitrary clients must not be able to reach
+the backend directly or impersonate a trusted proxy.
+
+The `prod` profile requires `DB_URL` (PostgreSQL JDBC URL), `DB_USERNAME`,
+`DB_PASSWORD`, `JWT_SECRET` (at least 32 UTF-8 bytes), `REDIS_HOST`, valid
+`REDIS_PORT`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`,
+`MINIO_BUCKET`, and `MINIDRIVE_CORS_ALLOWED_ORIGINS` (comma-separated exact
+HTTPS origins, no wildcard or path). It rejects known development credential
+values. The ingress trust settings above are also mandatory. The secondary Silo
+variables `MINIO_SECONDARY_ENDPOINT`, `MINIO_SECONDARY_ACCESS_KEY`,
+`MINIO_SECONDARY_SECRET_KEY`, and `MINIO_SECONDARY_BUCKET` become mandatory
+when `MINIO_SECONDARY_ENABLED=true`. Missing or invalid required settings stop
+startup with key names only; secret values are not included in diagnostics.
+Supply these values to the backend process and keep them in the operator's
+secret store, outside source control. Never pass real values on command lines
+that are retained in shell history or process listings.
+
+Example launch from `backend` after injecting the required environment values:
+
+```powershell
+$env:SPRING_PROFILES_ACTIVE = 'prod'
+.\mvnw.cmd spring-boot:run
+```
+
+Production Actuator exposure remains limited to health and Prometheus, with the
+existing loopback-only security rules. The current Prometheus scrape endpoint
+is reachable only from the backend host; remote scrape access is not configured.
+Compose does not provide monitoring. MD-011 revocation state remains in PostgreSQL. MD-012 rate limits
+depend on Redis and fail closed for protected requests when Redis is unavailable.
+MD-013 CORS uses only the configured exact-origin allowlist.
+
+### Minimum backup and recovery responsibilities
+
+There are no repository backup or restore scripts and no automatic backup,
+point-in-time recovery, off-site replication, or disaster-recovery guarantee.
+Operators must configure and monitor PostgreSQL backups and protect Silo object
+content independently. A metadata-only restore is insufficient: file metadata
+and object bytes must represent a consistent recovery point. Quiesce writes or
+use coordinated snapshots before backup; restore PostgreSQL and Silo content
+from the matching recovery point, then run read-only verification of schema,
+file/version records, object locations, representative object reads and hashes,
+and authentication/revocation behavior before reopening traffic. Protect the
+production secret set (especially `JWT_SECRET` and storage/database credentials)
+in the secret manager's backup/recovery process; retaining the same JWT secret
+avoids invalidating otherwise valid tokens. Assign an operator for retention,
+backup-failure alerting, secret recovery, and periodic isolated restore drills.
+These are operational prerequisites; this repository does not automate them.
+
 ## Local database
 
 MiniDrive development PostgreSQL runs in Docker and is isolated from any PostgreSQL
@@ -30,8 +115,9 @@ Set-Location C:\MiniDrive\backend
 .\mvnw.cmd spring-boot:run
 ```
 
-The backend reads its datasource settings from the root `.env` file. Copy
-`.env.example` to `.env` for a new checkout and keep the real `.env` local.
+The default `dev` profile reads its datasource settings from the root `.env`
+file. Copy `.env.example` to `.env` for a new checkout and keep the real `.env`
+local. The explicit `prod` profile does not import this file.
 
 ## Local Prometheus monitoring
 

@@ -49,8 +49,8 @@ flowchart TB
 
     subgraph DATA["Data stores"]
         direction TB
-        PG[("PostgreSQL 16 — metadata<br/>`infra/docker-compose.yml` service `postgres`<br/>schema: `backend/src/main/resources/db/migration/` V1–V16<br/>(users, folders, files, file_permissions, share_links,<br/>file_versions, upload_sessions, upload_chunks,<br/>object_locations, object_replicas)")]
-        REDIS[("Redis — file-listing cache only<br/>`infra/docker-compose.yml` service `redis`<br/>no persistence, LRU eviction, cache-only:<br/>never a source of truth")]
+        PG[("PostgreSQL 16 — metadata<br/>`infra/docker-compose.yml` service `postgres`<br/>schema: `backend/src/main/resources/db/migration/` V1–V20<br/>(users, folders, files, file_permissions, share_links,<br/>file_versions, upload_sessions, upload_chunks,<br/>object_locations, object_replicas, revoked_tokens)")]
+        REDIS[("Redis — file-listing cache + MD-012 rate limits<br/>`infra/docker-compose.yml` service `redis`<br/>development-only, no persistence, LRU eviction<br/>never a source of truth")]
     end
 
     subgraph SILO["Object storage — Silo nodes (MinIO-compatible)"]
@@ -106,9 +106,15 @@ flowchart TB
     class USER actor
 ```
 
+> Deployment boundary: `infra/docker-compose.yml` is local development
+> infrastructure only. It does not run the backend, frontend, HTTPS ingress,
+> or monitoring. Production uses the `prod` Spring profile and an externally
+> operated TLS termination boundary; see the README deployment section. No
+> production proxy, certificate manager, or secret manager is implemented here.
+
 ### Flow summary
 
-1. **User request path (solid):** browser → React frontend (`frontend/src/`) → HTTP/REST with JWT → Spring Security filter chain → controllers → services. Services read/write metadata through JPA repositories to **PostgreSQL**, consult the **Redis**-backed file-listing cache (falls through to the database on miss; cache failures never fail the request), and store object bytes through the **storage abstraction** (`StorageService` / `RoutingStorageService`) to the **primary Silo** node.
+1. **User request path (solid):** browser → React frontend (`frontend/src/`) → HTTP/REST with JWT → Spring Security filter chain → controllers → services. Services read/write metadata and revoked-token state through JPA repositories to **PostgreSQL**, consult the **Redis**-backed file-listing cache (falls through to the database on miss; cache failures never fail the request), enforce MD-012 login, registration, and public-share limits in **Redis** (unavailable Redis rejects those protected requests), and store object bytes through the **storage abstraction** (`StorageService` / `RoutingStorageService`) to the **primary Silo** node.
 2. **Replication & repair (dashed):** upload routing records object locations and replica expectations (`object_locations`, `object_replicas` migrations V15/V16) and can copy objects to the **secondary Silo**, with a scheduled repair pass and node health probes. This code is **implemented but disabled by default** (`MINIDRIVE_REPLICATION_ENABLED=false`, `MINIO_SECONDARY_ENABLED=false` in `.env.example`).
 3. **Monitoring (dotted):** Actuator exposes only `health` and `prometheus` on the main port; Prometheus (a host process by configuration — the repo contains only its scrape config, `infra/prometheus.yml`, and no Compose service) is configured to scrape it every 15 seconds. Grafana assets exist **as configuration files only** — no Grafana service is defined in `infra/docker-compose.yml`. The k6 suite in `infra/load-testing/` is likewise a manually run configuration artifact, not a deployed component.
 
@@ -219,7 +225,7 @@ sequenceDiagram
 
 1. A page calls a per-domain module (`frontend/src/api/files.ts`, `folders.ts`, `share.ts`, `versions.ts`, `permissions.ts`, `uploads.ts`, `frontend/src/services/authService.ts`) rather than Axios directly.
 2. The shared instance in `frontend/src/api/client.ts` attaches `Authorization: Bearer <jwt>` from `getToken()` (`frontend/src/utils/tokenStorage.ts`, which reads `localStorage`) when a token exists; login, register and health calls send no header.
-3. `config/CorsConfig.java` registers a CORS policy for `/api/**` only: origin patterns `http://localhost:[*]` and `http://127.0.0.1:[*]`, methods `GET POST PUT PATCH DELETE OPTIONS`, headers `Authorization` and `Content-Type`, `allowCredentials(false)`, `maxAge(1800)`. The `OPTIONS` preflight is therefore answered by Spring Security before any controller runs.
+3. `config/CorsConfig.java` supplies the single CORS policy used by Spring Security for `/api/**`. Exact origins come from `MINIDRIVE_CORS_ALLOWED_ORIGINS` (comma-separated); the default is `http://localhost:5173,http://127.0.0.1:5173`. Methods are `GET POST PUT PATCH DELETE OPTIONS`, request headers are `Authorization` and `Content-Type`, credentials are disabled, and preflight is cached for 1800 seconds. Valid preflight is processed by Spring Security before authentication; see `docs/MD-013-cors.md` for deployment setup.
 4. `logging/CorrelationIdFilter.java` (registration order `HIGHEST_PRECEDENCE + 20`) accepts an inbound `X-Correlation-ID` only if it matches `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`, otherwise generates a UUID, echoes it, and puts it in the SLF4J MDC.
 5. `config/SecurityConfig.java` `securityFilterChain` matches `/api/**`, disables CSRF, uses `SessionCreationPolicy.STATELESS` and sets `HttpStatusEntryPoint(UNAUTHORIZED)` for unauthenticated requests.
 6. `security/JwtAuthenticationFilter.doFilterInternal` reads the bearer token, calls `JwtService.extractUsername` and `JwtService.isTokenValid` (HMAC verification via `parseSignedClaims`, subject present, expiry in the future), then loads the user again through `security/CustomUserDetailsService.loadUserByUsername`. Any exception is swallowed, leaving the request anonymous. `shouldNotFilterAsyncDispatch()` returns `false`, so MVC async dispatch (streaming downloads) rebuilds the authentication from the original header.
@@ -416,8 +422,8 @@ sequenceDiagram
 #### 2.1 Browser → backend API
 
 - **What crosses.** REST/JSON requests and `multipart/form-data` or `application/octet-stream` bodies to port 8080 (`server.port: 8080`), carrying `Authorization: Bearer <JWT>` for protected routes, plus an optional `X-Correlation-ID` and `Idempotency-Key` header. Responses carry JSON, file bytes, `X-Correlation-ID`, and the security headers the API chain writes eagerly (`config/SecurityConfig.java`).
-- **Protection that exists.** Stateless JWT authentication for everything except the permitAll list (`config/SecurityConfig.java`); request validation with `jakarta.validation` `@Valid` on DTOs; `exception/GlobalExceptionHandler.java` for error translation; CORS restricted to `http://localhost:[*]` and `http://127.0.0.1:[*]` on `/api/**` with `allowCredentials(false)` and a fixed method/header list (`config/CorsConfig.java`); inbound correlation ids validated against a strict pattern (`logging/CorrelationIdFilter.java`).
-- **Unverified / absent.** No TLS anywhere in the repository: `application.yml` has no `server.ssl` block, `infra/prometheus.yml` uses `scheme: http`, and all Compose port mappings are plain HTTP. No reverse proxy, no rate limiting or lockout on `/api/auth/login` or `/api/auth/register` (no rate-limit dependency in `backend/pom.xml`), no CORS allowlist outside localhost, no explicit content-security-policy configuration. *(Interpretation)* with `allowCredentials(false)` and header-based auth there are no session cookies to forge, so CSRF is a limited surface — but the JWT is stored in `localStorage` (`frontend/src/utils/tokenStorage.ts`), which any injected script can read.
+- **Protection that exists.** Stateless JWT authentication for everything except the permitAll list (`config/SecurityConfig.java`); request validation with `jakarta.validation` `@Valid` on DTOs; `exception/GlobalExceptionHandler.java` for error translation; CORS restricted to the exact configured origins on `/api/**` with `allowCredentials(false)` and fixed methods/headers (`config/CorsConfig.java`); inbound correlation ids validated against a strict pattern (`logging/CorrelationIdFilter.java`).
+- **Unverified / absent.** No TLS anywhere in the repository: `application.yml` has no `server.ssl` block, `infra/prometheus.yml` uses `scheme: http`, and all Compose port mappings are plain HTTP. No reverse proxy or explicit content-security-policy configuration. Deployment CORS values and browser behavior against an actual deployed frontend have not been verified. *(Interpretation)* with `allowCredentials(false)` and header-based auth there are no session cookies to forge, so CSRF is a limited surface — but the JWT is stored in `localStorage` (`frontend/src/utils/tokenStorage.ts`), which any injected script can read.
 
 #### 2.2 JWT authentication and protected API endpoints
 

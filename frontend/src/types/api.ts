@@ -12,3 +12,10 @@ export interface ApiError {
   /** Per-field messages when the backend returned validation errors. */
   fieldErrors?: Record<string, string>;
 }
+
+/** Result returned by file and folder cleanup lifecycle DELETE endpoints. */
+export interface DeletionResult {
+  jobId?: string;
+  complete: boolean;
+  status?: string;
+}

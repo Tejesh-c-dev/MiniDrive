@@ -94,8 +94,8 @@ public class FileService {
     public FileUploadResponse upload(Authentication authentication, MultipartFile multipartFile, UUID folderId) {
         User owner = currentUser(authentication);
         userRepository.findByIdForUpdate(owner.getId()).orElseThrow();
-        if (multipartFile == null || multipartFile.isEmpty()) {
-            throw new IllegalArgumentException("File must not be empty");
+        if (multipartFile == null) {
+            throw new IllegalArgumentException("File is required");
         }
         long size = multipartFile.getSize();
         if (size < 0) throw new IllegalArgumentException("Size in bytes must be non-negative");
@@ -357,8 +357,8 @@ public class FileService {
                     "You do not have permission to modify this file");
         }
 
-        if (multipartFile == null || multipartFile.isEmpty()) {
-            throw new IllegalArgumentException("File must not be empty");
+        if (multipartFile == null) {
+            throw new IllegalArgumentException("File is required");
         }
 
         long size = multipartFile.getSize();

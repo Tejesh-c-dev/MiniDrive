@@ -108,6 +108,19 @@ class SiloStorageServiceRealMinioLiveTest {
     }
 
     @Test
+    @Order(0)
+    void zeroByteObjectRoundTripsWithEmptySha256() throws Exception {
+        String key = FINAL_PREFIX + "zero-byte";
+        storageService.upload(key, new ByteArrayInputStream(new byte[0]), 0,
+                "application/octet-stream");
+        assertEquals(java.util.Optional.of(true), storageService.exists(key));
+        byte[] downloaded = readAll(storageService.download(key));
+        assertArrayEquals(new byte[0], downloaded);
+        assertEquals("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                sha256Hex(downloaded));
+    }
+
+    @Test
     @Order(1)
     void stagingChunkUploadsRetrievesAndComparesByteForByte() throws Exception {
         byte[] chunk = randomBytes(64 * 1024);

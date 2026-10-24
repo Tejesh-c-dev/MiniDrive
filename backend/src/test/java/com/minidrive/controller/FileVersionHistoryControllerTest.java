@@ -367,6 +367,50 @@ class FileVersionHistoryControllerTest {
     }
 
     @Test
+    void zeroByteReplacementAppendsVersionAndKeepsHistoricalContentDownloadable() throws Exception {
+        String token = registerAndGetToken("Alice", "alice@test.com");
+        var stored = new java.util.concurrent.ConcurrentHashMap<String, byte[]>();
+        org.mockito.Mockito.doAnswer(invocation -> {
+            stored.put(invocation.getArgument(0),
+                    ((java.io.InputStream) invocation.getArgument(1)).readAllBytes());
+            return null;
+        }).when(storageService).upload(anyString(), any(java.io.InputStream.class), anyLong(), anyString());
+        org.mockito.Mockito.when(storageService.download(anyString()))
+                .thenAnswer(invocation -> new ByteArrayInputStream(stored.get(invocation.getArgument(0))));
+
+        byte[] original = "historical bytes".getBytes(StandardCharsets.UTF_8);
+        String fileId = uploadAndGetId(token, "history.txt", "text/plain", original);
+        File before = reload(fileId);
+        replaceContent(token, fileId, "history.txt", "text/plain", new byte[0])
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentVersion").value(2))
+                .andExpect(jsonPath("$.sizeBytes").value(0))
+                .andExpect(jsonPath("$.checksum").value(
+                        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"));
+
+        File current = reload(fileId);
+        assertThat(current.getObjectKey()).isNotEqualTo(before.getObjectKey());
+        assertThat(current.getSizeBytes()).isZero();
+        assertThat(current.getChecksum()).isEqualTo(
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assertThat(stored.get(current.getObjectKey())).isEmpty();
+        assertThat(version(fileId, 1).getObjectKey()).isEqualTo(before.getObjectKey());
+        assertThat(version(fileId, 2).getObjectKey()).isEqualTo(current.getObjectKey());
+        assertThat(version(fileId, 2).getSizeBytes()).isZero();
+
+        MvcResult currentDownload = mockMvc.perform(get("/api/files/" + fileId + "/download")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(bodyBytes(currentDownload)).isEmpty();
+
+        MvcResult historicalDownload = mockMvc.perform(get("/api/files/" + fileId + "/versions/"
+                        + version(fileId, 1).getId() + "/download")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk()).andReturn();
+        assertThat(bodyBytes(historicalDownload)).isEqualTo(original);
+    }
+
+    @Test
     void metadataOnlyFileReportsCurrentVersionZero() throws Exception {
         String token = registerAndGetToken("Alice", "alice@test.com");
         String fileId = createMetadataAndGetId(token, "placeholder.txt", "text/plain", 5);
@@ -388,6 +432,12 @@ class FileVersionHistoryControllerTest {
         }
         assertThat(result.getResponse().getStatus()).isEqualTo(200);
         return result.getResponse().getContentAsString();
+    }
+
+    private byte[] bodyBytes(MvcResult result) throws Exception {
+        if (result.getRequest().isAsyncStarted()) result.getAsyncResult(5000);
+        return mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch(result))
+                .andReturn().getResponse().getContentAsByteArray();
     }
 
     private void grantRole(File file, String email, FileRole role) {

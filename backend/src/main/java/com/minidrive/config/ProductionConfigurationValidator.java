@@ -23,6 +23,8 @@ public class ProductionConfigurationValidator {
         require(environment, "spring.datasource.username", "DB_USERNAME", invalid);
         require(environment, "spring.datasource.password", "DB_PASSWORD", invalid);
         require(environment, "spring.data.redis.host", "REDIS_HOST", invalid);
+        require(environment, "spring.data.redis.username", "REDIS_USERNAME", invalid);
+        require(environment, "spring.data.redis.password", "REDIS_PASSWORD", invalid);
         require(environment, "jwt.secret", "JWT_SECRET", invalid);
         require(environment, "minio.endpoint", "MINIO_ENDPOINT", invalid);
         require(environment, "minio.access-key", "MINIO_ACCESS_KEY", invalid);
@@ -33,6 +35,7 @@ public class ProductionConfigurationValidator {
         String url = environment.getProperty("spring.datasource.url", "").trim();
         if (!url.startsWith("jdbc:postgresql:")) invalid.add("DB_URL must be a PostgreSQL JDBC URL");
         positivePort(environment.getProperty("spring.data.redis.port"), "REDIS_PORT", invalid);
+        rejectValue(environment, "spring.data.redis.password", "change-me-redis-password", "REDIS_PASSWORD", invalid);
 
         String jwt = environment.getProperty("jwt.secret", "");
         if (!jwt.isBlank() && (jwt.getBytes(StandardCharsets.UTF_8).length < 32

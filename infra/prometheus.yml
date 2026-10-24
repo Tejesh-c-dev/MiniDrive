@@ -1,6 +1,6 @@
 global:
   scrape_interval: 15s
-  evaluation_interval: 15s
+  evaluation_interval: 30s
 
 scrape_configs:
   - job_name: minidrive
@@ -8,3 +8,68 @@ scrape_configs:
     scheme: http
     static_configs:
       - targets: [127.0.0.1:8080]
+        labels:
+          service: backend
+
+  - job_name: postgres
+    static_configs:
+      - targets: [127.0.0.1:19187]
+        labels:
+          service: postgres
+
+  - job_name: redis
+    static_configs:
+      - targets: [127.0.0.1:19121]
+        labels:
+          service: redis
+
+  # Silo is the repository's MinIO-compatible implementation. The pinned
+  # image retains MinIO's Prometheus routes; public auth is enabled only for
+  # this local Compose stack and these API ports bind to host loopback.
+  - job_name: silo-primary
+    metrics_path: /minio/v2/metrics/cluster
+    static_configs:
+      - targets: [127.0.0.1:9000]
+        labels:
+          service: silo
+          node: primary
+
+  - job_name: silo-primary-node
+    metrics_path: /minio/v2/metrics/node
+    static_configs:
+      - targets: [127.0.0.1:9000]
+        labels:
+          service: silo
+          node: primary
+
+  - job_name: silo-primary-resource
+    metrics_path: /minio/v2/metrics/resource
+    static_configs:
+      - targets: [127.0.0.1:9000]
+        labels:
+          service: silo
+          node: primary
+
+  - job_name: silo-secondary
+    metrics_path: /minio/v2/metrics/cluster
+    static_configs:
+      - targets: [127.0.0.1:9100]
+        labels:
+          service: silo
+          node: secondary
+
+  - job_name: silo-secondary-node
+    metrics_path: /minio/v2/metrics/node
+    static_configs:
+      - targets: [127.0.0.1:9100]
+        labels:
+          service: silo
+          node: secondary
+
+  - job_name: silo-secondary-resource
+    metrics_path: /minio/v2/metrics/resource
+    static_configs:
+      - targets: [127.0.0.1:9100]
+        labels:
+          service: silo
+          node: secondary

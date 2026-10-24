@@ -13,6 +13,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.opentest4j.TestAbortedException;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.RedisPassword;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 /** Optional actual-Redis test. Uses unique identities and only its own expiring keys. */
@@ -30,8 +32,12 @@ class RateLimitRedisIntegrationTest {
 
     @Test void concurrentInstancesShareAtomicLimitAndRedisExpiresCounter() throws Exception {
         if (!reachable()) throw new TestAbortedException("Redis is unavailable at configured endpoint");
-        factory=new LettuceConnectionFactory(System.getenv().getOrDefault("REDIS_HOST","localhost"),
+        RedisStandaloneConfiguration server=new RedisStandaloneConfiguration(
+                System.getenv().getOrDefault("REDIS_HOST","localhost"),
                 Integer.parseInt(System.getenv().getOrDefault("REDIS_PORT","56379")));
+        server.setUsername(System.getenv().getOrDefault("REDIS_USERNAME","minidrive_app"));
+        server.setPassword(RedisPassword.of(System.getenv().getOrDefault("REDIS_PASSWORD","")));
+        factory=new LettuceConnectionFactory(server);
         factory.afterPropertiesSet();
         StringRedisTemplate template=new StringRedisTemplate(factory);
         RateLimitService first=service(template), second=service(template);

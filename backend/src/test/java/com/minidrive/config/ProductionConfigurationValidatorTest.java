@@ -42,6 +42,18 @@ class ProductionConfigurationValidatorTest {
     }
 
     @Test
+    void rejectsMissingProductionRedisCredentialsWithoutEchoingValues() {
+        MockEnvironment environment = validEnvironment();
+        environment.setProperty("spring.data.redis.username", " ");
+        environment.setProperty("spring.data.redis.password", "");
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> new ProductionConfigurationValidator(environment));
+        assertTrue(error.getMessage().contains("REDIS_USERNAME"));
+        assertTrue(error.getMessage().contains("REDIS_PASSWORD"));
+        assertTrue(!error.getMessage().contains("production-redis-password"));
+    }
+
+    @Test
     void productionYamlOverridesDevelopmentCredentialDefaults() throws Exception {
         MockEnvironment environment = validEnvironment();
         environment.setProperty("MINIO_ACCESS_KEY", "minidrive-service");
@@ -169,6 +181,8 @@ class ProductionConfigurationValidatorTest {
         values.put("spring.datasource.password", "production-database-password");
         values.put("spring.data.redis.host", "redis.internal");
         values.put("spring.data.redis.port", "6379");
+        values.put("spring.data.redis.username", "minidrive_app");
+        values.put("spring.data.redis.password", "production-redis-password");
         values.put("jwt.secret", JWT);
         values.put("minio.endpoint", "http://silo.internal:9000");
         values.put("minio.access-key", "minidrive-service");

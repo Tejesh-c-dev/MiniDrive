@@ -75,11 +75,11 @@ public class FolderDeletionLifecycle {
         Set<UUID> fileIds = new HashSet<>();
         for (File file : subtreeFiles) {
             fileIds.add(file.getId());
-            if (file.getObjectKey() != null) manifest.add(file.getObjectKey());
+            addManifestKey(manifest, file.getObjectKey());
         }
         for (File file : subtreeFiles)
             for (FileVersion version : versions.findByFileIdOrderByVersionNumberAsc(file.getId()))
-                manifest.add(version.getObjectKey());
+                addManifestKey(manifest, version.getObjectKey());
 
         FolderDeletionJob job = jobs.saveAndFlush(new FolderDeletionJob(UUID.randomUUID(), current.getId(), ownerId));
         for (UploadSession session : sessions.findAll()) {
@@ -87,7 +87,7 @@ public class FolderDeletionLifecycle {
                     || (session.getTargetFile() != null && fileIds.contains(session.getTargetFile().getId()));
             if (associated)
                 for (UploadChunk chunk : chunks.findBySessionIdOrderByChunkIndexAsc(session.getId()))
-                    manifest.add(chunk.getStagingObjectKey());
+                    addManifestKey(manifest, chunk.getStagingObjectKey());
         }
         for (String key : manifest) objects.save(new FolderDeletionObject(job, key));
         objects.flush();
@@ -114,15 +114,15 @@ public class FolderDeletionLifecycle {
 
         FolderDeletionJob job = jobs.saveAndFlush(new FolderDeletionJob(UUID.randomUUID()));
         Set<String> manifest = new LinkedHashSet<>();
-        if (file.getObjectKey() != null) manifest.add(file.getObjectKey());
+        addManifestKey(manifest, file.getObjectKey());
         for (FileVersion version : versions.findByFileIdOrderByVersionNumberAsc(fileId))
-            if (version.getObjectKey() != null) manifest.add(version.getObjectKey());
+            addManifestKey(manifest, version.getObjectKey());
         // The file FK cascades to replacement upload sessions. Preserve their
         // staging keys before deleting the file so cleanup cannot lose them.
         for (UploadSession session : sessions.findAll()) {
             if (session.getTargetFile() != null && session.getTargetFile().getId().equals(fileId))
                 for (UploadChunk chunk : chunks.findBySessionIdOrderByChunkIndexAsc(session.getId()))
-                    if (chunk.getStagingObjectKey() != null) manifest.add(chunk.getStagingObjectKey());
+                    addManifestKey(manifest, chunk.getStagingObjectKey());
         }
         for (String key : manifest) objects.save(new FolderDeletionObject(job, key));
         objects.flush();
@@ -130,6 +130,11 @@ public class FolderDeletionLifecycle {
         files.flush();
         cache.evictAfterCommit();
         return job.getId();
+    }
+
+    /** Adds only real storage keys; the manifest table does not accept null or blank values. */
+    private static void addManifestKey(Set<String> manifest, String objectKey) {
+        if (objectKey != null && !objectKey.isBlank()) manifest.add(objectKey);
     }
 
     /** Durable fallback when an upload's compensating delete also fails. */

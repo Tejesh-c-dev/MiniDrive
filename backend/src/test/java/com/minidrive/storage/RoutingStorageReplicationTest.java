@@ -199,6 +199,17 @@ class RoutingStorageReplicationTest {
     }
 
     @Test
+    void staleDeletionMetadataWithoutRouteCannotEnterRepairQueue() {
+        jdbc.update("insert into object_replicas(object_key,storage_node_id,status,size_bytes,checksum,updated_at) values "
+                + "('deleted','primary','DELETING',1,'hash',current_timestamp),"
+                + "('deleted','secondary','FAILED',1,'hash',current_timestamp)");
+        jdbc.update("update object_replicas set next_attempt_at=current_timestamp where object_key='deleted' and status='FAILED'");
+
+        assertEquals(0, storage.repairOnce());
+        verifyNoInteractions(primary, secondary);
+    }
+
+    @Test
     void deletionRacingWithRepairWaitsThenRemovesTheRepairedCopy() throws Exception {
         jdbc.update("insert into object_locations(object_key,storage_node_id) values ('object','primary')");
         byte[] content = "replicated-content".getBytes();

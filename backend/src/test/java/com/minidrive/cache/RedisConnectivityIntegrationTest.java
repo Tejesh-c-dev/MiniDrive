@@ -75,7 +75,7 @@ class RedisConnectivityIntegrationTest {
         RedisStandaloneConfiguration server = new RedisStandaloneConfiguration(HOST, PORT);
         server.setUsername(System.getenv().getOrDefault("REDIS_USERNAME", "minidrive_app"));
         server.setPassword(org.springframework.data.redis.connection.RedisPassword
-                .of(System.getenv().getOrDefault("REDIS_PASSWORD", "")));
+                .of(System.getenv().getOrDefault("REDIS_PASSWORD", "local_only_redis_app_2026")));
         connectionFactory = new LettuceConnectionFactory(server);
         connectionFactory.afterPropertiesSet();
         return connectionFactory;

@@ -13,6 +13,7 @@ import com.minidrive.service.HistoricalObjectOrphanReport;
 import com.minidrive.service.UploadSessionService;
 import com.minidrive.storage.StorageService;
 import com.minidrive.storage.StorageNodeProperties;
+import com.minidrive.storage.NodeStorageClient;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.minio.BucketExistsArgs;
 import io.minio.ListObjectsArgs;
@@ -154,6 +155,48 @@ class ExpiredUploadSessionCleanupRealInfrastructureTest {
         assertTrue(chunks.findBySessionIdOrderByChunkIndexAsc(f.session().getId()).isEmpty());
         for (String key : f.keys()) assertMissing(key);
         assertExists(unrelated);
+    }
+
+    @Test void abortWaitsForRealInFlightChunkWriteAndRemovesItsStagingObject() throws Exception {
+        User owner = users.saveAndFlush(new User("MD003", "md003-" + RUN + "@test.invalid", "hash"));
+        UploadSession session = sessions.saveAndFlush(new UploadSession(owner, null, null,
+                "abort-race.bin", "application/octet-stream", 100, 100, 1,
+                UploadSessionStatus.INITIATED, LocalDateTime.now().plusHours(1)));
+        Authentication auth = auth(owner);
+        String key = "_uploads/" + owner.getId() + "/" + session.getId() + "/0";
+        byte[] bytes = new byte[100];
+        CountDownLatch writeEntered = new CountDownLatch(1);
+        CountDownLatch releaseWrite = new CountDownLatch(1);
+        NodeStorageClient realNode = new NodeStorageClient("primary",
+                MinioClient.builder().endpoint(ENDPOINT).credentials(ACCESS, SECRET).build(), BUCKET);
+        doAnswer(invocation -> {
+            byte[] body = ((java.io.InputStream) invocation.getArgument(1)).readAllBytes();
+            writeEntered.countDown();
+            assertTrue(releaseWrite.await(10, TimeUnit.SECONDS), "live storage write barrier timed out");
+            realNode.upload((String) invocation.getArgument(0), new ByteArrayInputStream(body), body.length,
+                    (String) invocation.getArgument(3));
+            return null;
+        }).when(storage).upload(anyString(), org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong(), anyString());
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> ingest = executor.submit(() -> uploads.ingestChunk(auth, session.getId(), 0,
+                    new ByteArrayInputStream(bytes)));
+            assertTrue(writeEntered.await(10, TimeUnit.SECONDS));
+            Future<?> abort = executor.submit(() -> uploads.abort(auth, session.getId()));
+            Thread.sleep(250);
+            assertFalse(abort.isDone(), "abort bypassed the PostgreSQL session-row lock");
+            releaseWrite.countDown();
+            ingest.get(20, TimeUnit.SECONDS);
+            abort.get(20, TimeUnit.SECONDS);
+        } finally {
+            releaseWrite.countDown();
+            executor.shutdownNow();
+        }
+
+        assertEquals(UploadSessionStatus.ABORTED, sessions.findById(session.getId()).orElseThrow().getStatus());
+        assertTrue(chunks.findBySessionIdOrderByChunkIndexAsc(session.getId()).isEmpty());
+        assertMissing(key);
     }
 
     @Test void nonExpiredSessionAndRealStagedObjectRemain() throws Exception {

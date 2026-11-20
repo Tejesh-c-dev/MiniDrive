@@ -39,7 +39,9 @@ it observed. The limiter uses the rightmost forwarded address only when the
 socket peer matches that allowlist; arbitrary clients must not be able to reach
 the backend directly or impersonate a trusted proxy.
 
-The `prod` profile requires `DB_URL` (PostgreSQL JDBC URL), `DB_USERNAME`,
+Copy `.env.example` to `.env` for local development; its Redis and MinIO values
+are intentionally local-only examples. Replace them before using any deployed
+environment. The `prod` profile requires `DB_URL` (PostgreSQL JDBC URL), `DB_USERNAME`,
 `DB_PASSWORD`, `JWT_SECRET` (at least 32 UTF-8 bytes), `REDIS_HOST`, `REDIS_PORT`,
 `REDIS_USERNAME`, `REDIS_PASSWORD`, valid
 `REDIS_PORT`, `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`,
@@ -113,6 +115,12 @@ Set-Location C:\MiniDrive\backend
 .\mvnw.cmd clean test
 .\mvnw.cmd spring-boot:run
 ```
+
+The test profile uses explicit local-only Redis and MinIO credentials matching
+`.env.example`. Start the local Compose services before running the integration
+tests. If `.env` uses custom Redis settings, set the matching `REDIS_HOST`,
+`REDIS_PORT`, `REDIS_USERNAME`, and `REDIS_PASSWORD` in the current process
+environment so tests authenticate with the same ACL identity.
 
 The default `dev` profile reads its datasource settings from the root `.env`
 file. Copy `.env.example` to `.env` for a new checkout and keep the real `.env`
@@ -199,7 +207,7 @@ it Compose looks for `.env` next to the compose file (i.e. `infra/`).
 
 Open the console at http://localhost:9001 and confirm the `minidrive-files` bucket
 exists. The login is `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` from the root `.env`
-(`minioadmin` / `minioadmin` when unset). You can also check it from the MinIO container, which bundles the `mc` client:
+(`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` are required in `.env`). You can also check it from the MinIO container, which bundles the `mc` client:
 
 ```powershell
 docker exec minidrive-minio sh -c 'mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"'
@@ -238,9 +246,9 @@ run it from `C:\MiniDrive\backend`:
 
 ```powershell
 .\mvnw.cmd '-Plive-minio' `
-  '-Dminidrive.live-minio.endpoint=http://127.0.0.1:9000' `
-  '-Dminidrive.live-minio.access-key=minioadmin' `
-  '-Dminidrive.live-minio.secret-key=minioadmin' `
+  '-Dminidrive.live-minio.endpoint=http://127.0.0.1:9200' `
+  '-Dminidrive.live-minio.access-key=<test-access-key>' `
+  '-Dminidrive.live-minio.secret-key=<test-secret-key>' `
   '-Dtest=SiloStorageServiceRealMinioLiveTest' test
 ```
 

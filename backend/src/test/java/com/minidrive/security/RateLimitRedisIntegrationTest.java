@@ -36,7 +36,7 @@ class RateLimitRedisIntegrationTest {
                 System.getenv().getOrDefault("REDIS_HOST","localhost"),
                 Integer.parseInt(System.getenv().getOrDefault("REDIS_PORT","56379")));
         server.setUsername(System.getenv().getOrDefault("REDIS_USERNAME","minidrive_app"));
-        server.setPassword(RedisPassword.of(System.getenv().getOrDefault("REDIS_PASSWORD","")));
+        server.setPassword(RedisPassword.of(System.getenv().getOrDefault("REDIS_PASSWORD","local_only_redis_app_2026")));
         factory=new LettuceConnectionFactory(server);
         factory.afterPropertiesSet();
         StringRedisTemplate template=new StringRedisTemplate(factory);

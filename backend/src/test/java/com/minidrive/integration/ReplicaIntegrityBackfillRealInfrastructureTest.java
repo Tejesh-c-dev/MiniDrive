@@ -44,8 +44,8 @@ class ReplicaIntegrityBackfillRealInfrastructureTest {
         String secondaryEndpoint = System.getenv().getOrDefault("MINIO_SECONDARY_ENDPOINT", "http://127.0.0.1:9100");
         String primaryBucket = System.getenv().getOrDefault("MINIO_BUCKET", "minidrive-files");
         String secondaryBucket = System.getenv().getOrDefault("MINIO_SECONDARY_BUCKET", "minidrive-files-secondary");
-        String access = System.getenv().getOrDefault("MINIO_ACCESS_KEY", "minioadmin");
-        String secret = System.getenv().getOrDefault("MINIO_SECRET_KEY", "minioadmin");
+        String access = System.getenv().getOrDefault("MINIO_ACCESS_KEY", "md_it_silo");
+        String secret = System.getenv().getOrDefault("MINIO_SECRET_KEY", "md_it_silo_2026_disposable");
         var ds = new DriverManagerDataSource(dbUrl, dbUser, dbPassword);
         Flyway.configure().dataSource(ds).baselineOnMigrate(true).load().migrate();
         JdbcTemplate jdbc = new JdbcTemplate(ds);

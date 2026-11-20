@@ -81,7 +81,7 @@ class FileListingCacheRedisIntegrationTest {
         registry.add("spring.data.redis.host", () -> HOST);
         registry.add("spring.data.redis.port", () -> PORT);
         registry.add("spring.data.redis.username", () -> System.getenv().getOrDefault("REDIS_USERNAME", "minidrive_app"));
-        registry.add("spring.data.redis.password", () -> System.getenv().getOrDefault("REDIS_PASSWORD", ""));
+        registry.add("spring.data.redis.password", () -> System.getenv().getOrDefault("REDIS_PASSWORD", "local_only_redis_app_2026"));
     }
 
     @Autowired private MockMvc mockMvc;

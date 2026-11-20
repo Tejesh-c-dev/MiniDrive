@@ -52,10 +52,8 @@ class SiloStorageServiceRealMinioLiveTest {
 
     private static final String ENDPOINT = System.getProperty(
             "minidrive.live-minio.endpoint", "http://127.0.0.1:9000");
-    private static final String ROOT_USER = System.getProperty(
-            "minidrive.live-minio.access-key", "minioadmin");
-    private static final String ROOT_PASSWORD = System.getProperty(
-            "minidrive.live-minio.secret-key", "minioadmin");
+    private static final String ROOT_USER = System.getProperty("minidrive.live-minio.access-key", "");
+    private static final String ROOT_PASSWORD = System.getProperty("minidrive.live-minio.secret-key", "");
 
     /** Bucket and object prefixes are unique to this verification run. */
     private static final String BUCKET_NAME = "minidrive-verify-"
@@ -71,7 +69,8 @@ class SiloStorageServiceRealMinioLiveTest {
     @BeforeAll
     static void startAgainstLiveMinio() throws Exception {
         assertEquals("http://127.0.0.1:9200", ENDPOINT, "Live Silo tests are restricted to the disposable integration node");
-        assertEquals("md_it_silo", ROOT_USER);
+        assertTrue(!ROOT_USER.isBlank() && !ROOT_PASSWORD.isBlank(),
+                "Explicit disposable MinIO credentials are required for the live test");
         assertTrue(!"minioadmin".equals(ROOT_PASSWORD), "Development storage credentials are not accepted");
         MinioClient reachableClient = MinioClient.builder()
                 .endpoint(ENDPOINT)

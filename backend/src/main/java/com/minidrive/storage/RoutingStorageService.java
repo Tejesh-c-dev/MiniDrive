@@ -264,6 +264,8 @@ public class RoutingStorageService implements StorageService {
         if (!replicationEnabled) return 0;
         var rows = jdbc.query("select object_key, storage_node_id from object_replicas "
                         + "where status in ('PENDING','FAILED') and (next_attempt_at is null or next_attempt_at <= current_timestamp) "
+                        + "and not exists (select 1 from object_replicas deleting "
+                        + "where deleting.object_key=object_replicas.object_key and deleting.status='DELETING') "
                         + "order by updated_at limit 100",
                 (rs, row) -> new String[] {rs.getString(1), rs.getString(2)});
         int repaired = 0;

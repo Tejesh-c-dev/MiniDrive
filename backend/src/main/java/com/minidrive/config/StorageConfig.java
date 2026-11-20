@@ -26,8 +26,8 @@ public class StorageConfig {
     @Bean
     Map<String, NodeStorageClient> storageNodeClients(StorageNodeProperties properties,
             @Value("${minio.endpoint:http://localhost:9000}") String endpoint,
-            @Value("${minio.access-key:minioadmin}") String accessKey,
-            @Value("${minio.secret-key:minioadmin}") String secretKey,
+            @Value("${minio.access-key:}") String accessKey,
+            @Value("${minio.secret-key:}") String secretKey,
             @Value("${minio.bucket:minidrive-files}") String bucket) {
         Map<String, NodeStorageClient> clients = new LinkedHashMap<>();
         var configuredNodesValue = properties.getNodes();

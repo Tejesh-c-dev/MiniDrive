@@ -38,3 +38,9 @@ dist/
 
 # Visual Studio Code workspace settings
 .vscode/
+
+# Local-only agent skills
+/.agents/skills/
+
+# Local database backup
+/artifacts/backups/minidrive-before-v22-20261121T173956Z.dump

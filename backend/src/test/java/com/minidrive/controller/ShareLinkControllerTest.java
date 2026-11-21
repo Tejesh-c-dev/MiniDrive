@@ -9,6 +9,8 @@ import com.minidrive.repository.PermissionRepository;
 import com.minidrive.repository.ShareLinkRepository;
 import com.minidrive.repository.UserRepository;
 import com.minidrive.security.ShareTokenService;
+import com.minidrive.service.DistributedRateLimiter;
+import com.minidrive.service.RateLimitExceededException;
 import com.minidrive.storage.StorageService;
 import io.micrometer.core.instrument.MeterRegistry;
 
@@ -28,7 +30,9 @@ import java.io.ByteArrayInputStream;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -57,6 +61,7 @@ class ShareLinkControllerTest {
     @Autowired private ShareTokenService shareTokenService;
     @Autowired private MeterRegistry meterRegistry;
     @MockitoBean private StorageService storageService;
+    @MockitoBean private DistributedRateLimiter rateLimiter;
 
     @BeforeEach
     void cleanup() {
@@ -186,6 +191,25 @@ class ShareLinkControllerTest {
                 .andExpect(status().isNotFound());
         org.mockito.Mockito.verify(storageService, org.mockito.Mockito.never())
                 .download(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void shareRateLimitReturnsGeneric429ForMetadataAndDownload() throws Exception {
+        String rawToken = "sensitive-share-capability";
+        org.mockito.Mockito.doThrow(new RateLimitExceededException(9))
+                .when(rateLimiter).share(org.mockito.ArgumentMatchers.anyString(),
+                        org.mockito.ArgumentMatchers.eq(rawToken));
+
+        for (String path : new String[] {"/api/share/" + rawToken,
+                "/api/share/" + rawToken + "/download"}) {
+            mockMvc.perform(get(path))
+                    .andExpect(status().isTooManyRequests())
+                    .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                            .string("Retry-After", "9"))
+                    .andExpect(jsonPath("$.error")
+                            .value("Too many requests. Please try again later."))
+                    .andExpect(jsonPath("$.error").value(not(containsString(rawToken))));
+        }
     }
 
     @Test

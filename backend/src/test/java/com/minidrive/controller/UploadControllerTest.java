@@ -10,6 +10,7 @@ import com.minidrive.repository.FolderRepository;
 import com.minidrive.repository.UploadChunkRepository;
 import com.minidrive.repository.UploadSessionRepository;
 import com.minidrive.repository.UserRepository;
+import com.minidrive.service.DistributedRateLimiter;
 import com.minidrive.service.UploadSessionService;
 import com.minidrive.storage.StorageService;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -77,6 +78,7 @@ class UploadControllerTest {
     @Autowired private MeterRegistry meterRegistry;
     @MockitoSpyBean private UploadChunkRepository uploadChunkRepository;
     @MockitoBean private StorageService storageService;
+    @MockitoBean private DistributedRateLimiter rateLimiter;
 
     @BeforeEach
     void cleanup() {

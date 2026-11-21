@@ -27,6 +27,9 @@ public class User {
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
+    @Column(name = "auth_version", nullable = false)
+    private long authVersion;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -61,6 +64,10 @@ public class User {
         return passwordHash;
     }
 
+    public long getAuthVersion() {
+        return authVersion;
+    }
+
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }
@@ -79,6 +86,10 @@ public class User {
 
     public void setPasswordHash(String passwordHash) {
         this.passwordHash = passwordHash;
+    }
+
+    public void setAuthVersion(long authVersion) {
+        this.authVersion = authVersion;
     }
 
     public void setUpdatedAt(LocalDateTime updatedAt) {

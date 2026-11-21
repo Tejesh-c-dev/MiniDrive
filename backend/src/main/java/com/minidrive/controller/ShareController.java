@@ -2,6 +2,8 @@ package com.minidrive.controller;
 
 import com.minidrive.dto.sharelink.SharedFileResponse;
 import com.minidrive.service.ShareLinkService;
+import com.minidrive.service.ClientIpResolver;
+import com.minidrive.service.DistributedRateLimiter;
 import com.minidrive.util.DownloadResponses;
 
 import org.springframework.http.ResponseEntity;
@@ -10,6 +12,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+import jakarta.servlet.http.HttpServletRequest;
 
 /**
  * Anonymous, read-only access to a file through a public share link.
@@ -25,21 +28,33 @@ import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBo
 public class ShareController {
 
     private final ShareLinkService shareLinkService;
+    private final DistributedRateLimiter rateLimiter;
+    private final ClientIpResolver clientIpResolver;
 
-    public ShareController(ShareLinkService shareLinkService) {
+    public ShareController(ShareLinkService shareLinkService,
+                           DistributedRateLimiter rateLimiter,
+                           ClientIpResolver clientIpResolver) {
         this.shareLinkService = shareLinkService;
+        this.rateLimiter = rateLimiter;
+        this.clientIpResolver = clientIpResolver;
     }
 
     @GetMapping("/{token}")
     public ResponseEntity<SharedFileResponse> metadata(
-            @PathVariable String token) {
+            @PathVariable String token,
+            HttpServletRequest request) {
+
+        rateLimiter.share(clientIpResolver.resolve(request), token);
 
         return ResponseEntity.ok(shareLinkService.getSharedFile(token));
     }
 
     @GetMapping("/{token}/download")
     public ResponseEntity<StreamingResponseBody> download(
-            @PathVariable String token) {
+            @PathVariable String token,
+            HttpServletRequest request) {
+
+        rateLimiter.share(clientIpResolver.resolve(request), token);
 
         ShareLinkService.SharedFileDownload shared = shareLinkService.download(token);
 

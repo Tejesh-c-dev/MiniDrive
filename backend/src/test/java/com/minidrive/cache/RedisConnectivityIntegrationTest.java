@@ -6,6 +6,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializer;
@@ -71,7 +72,12 @@ class RedisConnectivityIntegrationTest {
     }
 
     private RedisConnectionFactory factory() {
-        connectionFactory = new LettuceConnectionFactory(HOST, PORT);
+        RedisStandaloneConfiguration redis = new RedisStandaloneConfiguration(HOST, PORT);
+        String username = System.getenv("REDIS_USERNAME");
+        String password = System.getenv("REDIS_PASSWORD");
+        if (username != null && !username.isBlank()) redis.setUsername(username);
+        if (password != null && !password.isBlank()) redis.setPassword(password);
+        connectionFactory = new LettuceConnectionFactory(redis);
         connectionFactory.afterPropertiesSet();
         return connectionFactory;
     }
@@ -118,8 +124,7 @@ class RedisConnectivityIntegrationTest {
 
             // Writes through the cache-layer naming convention only; no other
             // application keys were touched by this test.
-            assertThat(template.keys(CacheConfig.CACHE_KEY_PREFIX + "*"))
-                    .contains(key);
+            assertThat(template.hasKey(key)).isTrue();
         } finally {
             template.delete(key);
         }

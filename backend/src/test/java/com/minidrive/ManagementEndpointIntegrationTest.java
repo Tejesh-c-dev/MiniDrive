@@ -83,8 +83,8 @@ class ManagementEndpointIntegrationTest {
 
     private String jwtForOrdinaryUser() {
         String email = "monitoring-user@test.com";
-        userRepository.saveAndFlush(new User("Monitoring User", email, "not-used"));
-        return jwtService.generateToken(email);
+        User user = userRepository.saveAndFlush(new User("Monitoring User", email, "not-used"));
+        return jwtService.generateToken(email, user.getAuthVersion());
     }
 
     private HttpResponse<String> get(int port, String path, String jwt) throws IOException, InterruptedException {

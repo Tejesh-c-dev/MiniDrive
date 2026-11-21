@@ -10,6 +10,7 @@ import com.minidrive.repository.FileVersionRepository;
 import com.minidrive.repository.FolderRepository;
 import com.minidrive.repository.PermissionRepository;
 import com.minidrive.repository.UserRepository;
+import com.minidrive.service.DistributedRateLimiter;
 import com.minidrive.service.FileListingCache;
 import com.minidrive.service.ListingCacheGeneration;
 import com.minidrive.storage.StorageService;
@@ -103,6 +104,7 @@ class FileListingCacheTest {
     @MockitoBean private StorageService storageService;
     @MockitoBean private CacheManager cacheManager;
     @MockitoBean private ListingCacheGeneration generationStore;
+    @MockitoBean private DistributedRateLimiter rateLimiter;
 
     /** Entry store behind the mocked {@link Cache}, so hits behave like hits. */
     private final Map<Object, Object> storedEntries = new HashMap<>();

@@ -6,6 +6,7 @@ import com.minidrive.repository.FileRepository;
 import com.minidrive.repository.FolderRepository;
 import com.minidrive.repository.PermissionRepository;
 import com.minidrive.repository.UserRepository;
+import com.minidrive.service.DistributedRateLimiter;
 import com.minidrive.storage.StorageService;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -42,6 +43,7 @@ class PermissionControllerTest {
     @Autowired private FolderRepository folderRepository;
     @Autowired private PermissionRepository permissionRepository;
     @MockitoBean private StorageService storageService;
+    @MockitoBean private DistributedRateLimiter rateLimiter;
 
     @BeforeEach
     void cleanup() {

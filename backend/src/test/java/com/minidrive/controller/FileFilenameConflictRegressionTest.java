@@ -5,6 +5,7 @@ import com.minidrive.entity.File;
 import com.minidrive.repository.FileRepository;
 import com.minidrive.repository.FolderRepository;
 import com.minidrive.repository.UserRepository;
+import com.minidrive.service.DistributedRateLimiter;
 import com.minidrive.storage.StorageService;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -50,6 +51,7 @@ class FileFilenameConflictRegressionTest {
     @Autowired private FolderRepository folderRepository;
     @MockitoSpyBean private FileRepository fileRepository;
     @MockitoBean private StorageService storageService;
+    @MockitoBean private DistributedRateLimiter rateLimiter;
 
     @BeforeEach
     void cleanup() {

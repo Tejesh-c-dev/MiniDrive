@@ -1,4 +1,10 @@
 spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:56379}
+      username: ${REDIS_USERNAME:}
+      password: ${REDIS_PASSWORD:}
   datasource:
     url: jdbc:h2:mem:minidrive;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
     driver-class-name: org.h2.Driver
@@ -15,6 +21,15 @@ spring:
 jwt:
   secret: test-secret-key-that-is-long-enough-for-hmac-sha
   expiration: 86400000
+
+minidrive:
+  rate-limit:
+    login-ip: { limit: 10000, window: 15m }
+    login-account: { limit: 10000, window: 15m }
+    register-ip: { limit: 10000, window: 1h }
+    register-account: { limit: 10000, window: 24h }
+    share-ip: { limit: 10000, window: 1m }
+    share-token: { limit: 10000, window: 1m }
 
 management:
   metrics:

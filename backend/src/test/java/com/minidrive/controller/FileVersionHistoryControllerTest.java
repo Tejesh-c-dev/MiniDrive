@@ -10,6 +10,7 @@ import com.minidrive.repository.FileVersionRepository;
 import com.minidrive.repository.FolderRepository;
 import com.minidrive.repository.PermissionRepository;
 import com.minidrive.repository.UserRepository;
+import com.minidrive.service.DistributedRateLimiter;
 import com.minidrive.storage.StorageService;
 import io.micrometer.core.instrument.MeterRegistry;
 
@@ -66,6 +67,7 @@ class FileVersionHistoryControllerTest {
     @Autowired private MeterRegistry meterRegistry;
     @MockitoSpyBean private FileRepository fileRepository;
     @MockitoBean private StorageService storageService;
+    @MockitoBean private DistributedRateLimiter rateLimiter;
 
     @BeforeEach
     void cleanup() {

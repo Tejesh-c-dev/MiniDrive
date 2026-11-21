@@ -11,9 +11,11 @@ import org.springframework.stereotype.Service;
 public class CustomUserDetailsService implements UserDetailsService {
 
     private final UserRepository userRepository;
+    private final JwtService jwtService;
 
-    public CustomUserDetailsService(UserRepository userRepository) {
+    public CustomUserDetailsService(UserRepository userRepository, JwtService jwtService) {
         this.userRepository = userRepository;
+        this.jwtService = jwtService;
     }
 
     @Override
@@ -28,5 +30,15 @@ public class CustomUserDetailsService implements UserDetailsService {
                 .password(user.getPasswordHash())
                 .authorities("USER")
                 .build();
+    }
+
+    public boolean isTokenCurrent(String email, String token) {
+        Long tokenAuthVersion = jwtService.extractAuthVersion(token);
+        if (tokenAuthVersion == null) {
+            return false;
+        }
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+        return tokenAuthVersion == user.getAuthVersion();
     }
 }

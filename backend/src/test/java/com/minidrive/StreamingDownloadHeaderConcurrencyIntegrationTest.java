@@ -68,7 +68,7 @@ class StreamingDownloadHeaderConcurrencyIntegrationTest {
         URI uri = URI.create("http://127.0.0.1:" + port + "/api/files/" + file.getId() + "/download");
         HttpClient client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
         HttpRequest request = HttpRequest.newBuilder(uri)
-                .header("Authorization", "Bearer " + jwtService.generateToken(email))
+                .header("Authorization", "Bearer " + jwtService.generateToken(email, owner.getAuthVersion()))
                 .GET()
                 .build();
 

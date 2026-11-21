@@ -18,6 +18,7 @@ import com.minidrive.repository.PermissionRepository;
 import com.minidrive.repository.UploadChunkRepository;
 import com.minidrive.repository.UploadSessionRepository;
 import com.minidrive.repository.UserRepository;
+import com.minidrive.service.DistributedRateLimiter;
 import com.minidrive.service.UploadSessionService;
 import com.minidrive.storage.StorageService;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -98,6 +99,7 @@ class UploadCompletionControllerTest {
     @Autowired private MeterRegistry meterRegistry;
     @MockitoSpyBean private FileRepository fileRepository;
     @MockitoBean private StorageService storageService;
+    @MockitoBean private DistributedRateLimiter rateLimiter;
 
     /** In-memory stand-in for the object store used to verify assembly bytes. */
     private final ConcurrentHashMap<String, byte[]> stored = new ConcurrentHashMap<>();

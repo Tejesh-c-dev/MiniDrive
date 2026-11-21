@@ -2,6 +2,7 @@ package com.minidrive.exception;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpHeaders;
 
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -10,12 +11,27 @@ import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import com.minidrive.service.RateLimitExceededException;
+import com.minidrive.service.RateLimitUnavailableException;
 
 import java.util.HashMap;
 import java.util.Map;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<?> handleRateLimit(RateLimitExceededException ex) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, Long.toString(ex.getRetryAfterSeconds()))
+                .body(Map.of("error", "Too many requests. Please try again later."));
+    }
+
+    @ExceptionHandler(RateLimitUnavailableException.class)
+    public ResponseEntity<?> handleRateLimitUnavailable() {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(Map.of("error", "Request protection is temporarily unavailable"));
+    }
 
     @ExceptionHandler({OptimisticLockingFailureException.class, PessimisticLockingFailureException.class})
     public ResponseEntity<?> handleConcurrencyConflict(RuntimeException ex) {

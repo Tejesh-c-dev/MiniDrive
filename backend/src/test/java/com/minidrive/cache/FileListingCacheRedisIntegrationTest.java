@@ -33,7 +33,6 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -127,7 +126,7 @@ class FileListingCacheRedisIntegrationTest {
 
         String redisKey = listingRedisKey(aliceId + ":root", currentGeneration());
 
-        assertThat(rawRedis.keys(CacheConfig.CACHE_KEY_PREFIX + "*")).contains(redisKey);
+        assertThat(rawRedis.hasKey(redisKey)).isTrue();
 
         String json = rawRedis.opsForValue().get(redisKey);
         assertThat(json)
@@ -182,11 +181,10 @@ class FileListingCacheRedisIntegrationTest {
                 .andExpect(jsonPath("$[0].name").value("bob.txt"));
 
         String generation = currentGeneration();
-        assertThat(rawRedis.keys(CacheConfig.CACHE_KEY_PREFIX + "*")).containsExactlyInAnyOrder(
-                listingRedisKey(aliceId + ":root", generation),
-                listingRedisKey(aliceId + ":" + aliceFolder, generation),
-                listingRedisKey(bobId + ":root", generation),
-                ListingCacheGeneration.GENERATION_KEY);
+        assertThat(rawRedis.hasKey(listingRedisKey(aliceId + ":root", generation))).isTrue();
+        assertThat(rawRedis.hasKey(listingRedisKey(aliceId + ":" + aliceFolder, generation))).isTrue();
+        assertThat(rawRedis.hasKey(listingRedisKey(bobId + ":root", generation))).isTrue();
+        assertThat(rawRedis.hasKey(ListingCacheGeneration.GENERATION_KEY)).isTrue();
     }
 
     @Test
@@ -200,7 +198,7 @@ class FileListingCacheRedisIntegrationTest {
 
         String generationBefore = currentGeneration();
         String staleKey = listingRedisKey(aliceId + ":root", generationBefore);
-        assertThat(rawRedis.keys(CacheConfig.CACHE_KEY_PREFIX + "*")).contains(staleKey);
+        assertThat(rawRedis.hasKey(staleKey)).isTrue();
 
         createFile(token, "second.txt", null, "text/plain", 2);
 
@@ -211,8 +209,7 @@ class FileListingCacheRedisIntegrationTest {
 
         mockMvc.perform(get("/api/files").header("Authorization", "Bearer " + token))
                 .andExpect(jsonPath("$", hasSize(2)));
-        assertThat(rawRedis.keys(CacheConfig.CACHE_KEY_PREFIX + "*"))
-                .contains(listingRedisKey(aliceId + ":root", generationAfter));
+        assertThat(rawRedis.hasKey(listingRedisKey(aliceId + ":root", generationAfter))).isTrue();
     }
 
     /** The Redis key the listing cache stores one owner/folder entry under. */
@@ -244,10 +241,10 @@ class FileListingCacheRedisIntegrationTest {
     }
 
     private void clearListingCache() {
-        Set<String> keys = rawRedis.keys(CacheConfig.CACHE_KEY_PREFIX + "*");
-        if (keys != null && !keys.isEmpty()) {
-            rawRedis.delete(keys);
-        }
+        // Entries are namespaced by a random generation token and expire
+        // naturally; deleting the marker gives this test a fresh namespace
+        // without requiring Redis KEYS permission.
+        rawRedis.delete(ListingCacheGeneration.GENERATION_KEY);
     }
 
     private String createFile(

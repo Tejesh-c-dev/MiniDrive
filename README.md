@@ -1,6 +1,22 @@
 # MiniDrive
 A mini version alternative for google drive
 
+## Frontend access-token storage
+
+After login or registration, the frontend stores the access token in browser
+`localStorage` under `minidrive_token`. This is convenient because the token
+survives page reloads and the API client can read it to send it in the
+`Authorization: Bearer` header. Logout and API responses with status `401`
+remove the stored token.
+
+Because JavaScript can read `localStorage`, an XSS vulnerability could expose
+the token. The app centralizes token reads and writes in `tokenStorage.ts`, but
+that organization does not prevent XSS or protect a token that malicious
+JavaScript can access. An `HttpOnly` cookie is an alternative: browser
+JavaScript cannot read its value, which limits direct token theft through XSS.
+Cookie-based authentication also needs the server and frontend to use cookies
+and to account for cross-site request forgery (CSRF).
+
 ## Local database
 
 MiniDrive development PostgreSQL runs in Docker and is isolated from any PostgreSQL

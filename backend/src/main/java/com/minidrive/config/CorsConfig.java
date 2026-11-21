@@ -2,14 +2,27 @@ package com.minidrive.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.util.Arrays;
 import java.util.List;
 
 @Configuration
 public class CorsConfig {
+
+    private final Environment environment;
+    private final String configuredOrigins;
+
+    public CorsConfig(Environment environment,
+                      @org.springframework.beans.factory.annotation.Value("${minidrive.cors.allowed-origins:}")
+                      String configuredOrigins) {
+        this.environment = environment;
+        this.configuredOrigins = configuredOrigins;
+    }
 
     /**
      * CORS policy applied globally via Spring Security's cors() integration.
@@ -24,12 +37,21 @@ public class CorsConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
 
-        // Allow the Vite dev server and any localhost variant used during development.
-        // In production, restrict this to the actual deployed frontend origin.
-        config.setAllowedOriginPatterns(List.of(
-                "http://localhost:[*]",
-                "http://127.0.0.1:[*]"
-        ));
+        if (environment.acceptsProfiles(Profiles.of("dev", "test"))) {
+            config.setAllowedOriginPatterns(List.of(
+                    "http://localhost:[*]",
+                    "http://127.0.0.1:[*]"
+            ));
+        } else {
+            List<String> origins = Arrays.stream(configuredOrigins.split(","))
+                    .map(String::trim)
+                    .filter(origin -> !origin.isEmpty())
+                    .toList();
+            if (origins.stream().anyMatch(origin -> origin.contains("*"))) {
+                throw new IllegalArgumentException("CORS allowed origins must not contain wildcards");
+            }
+            config.setAllowedOrigins(origins);
+        }
 
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type"));

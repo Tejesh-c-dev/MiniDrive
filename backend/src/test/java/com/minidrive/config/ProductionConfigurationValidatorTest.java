@@ -26,6 +26,7 @@ class ProductionConfigurationValidatorTest {
         assertTrue("dev".equals(environment.getProperty("spring.profiles.default")));
         assertTrue("localhost".equals(resolve(environment, "spring.data.redis.host")));
         assertTrue("56379".equals(resolve(environment, "spring.data.redis.port")));
+        assertTrue(resolve(environment, "minio.access-key").isBlank());
 
         environment.getPropertySources().addFirst(loader
                 .load("development", new ClassPathResource("application-dev.yml")).get(0));
@@ -39,6 +40,73 @@ class ProductionConfigurationValidatorTest {
     @Test
     void acceptsAValidProductionConfiguration() {
         assertDoesNotThrow(() -> new ProductionConfigurationValidator(validEnvironment()));
+    }
+
+    @Test
+    void acceptsExplicitLocalDevelopmentCredentials() {
+        MockEnvironment environment = new MockEnvironment()
+                .withProperty("spring.data.redis.username", "local_minidrive_app")
+                .withProperty("spring.data.redis.password", "local_only_redis_app_2026")
+                .withProperty("minio.access-key", "local_minio_user")
+                .withProperty("minio.secret-key", "local_only_minio_root_2026");
+
+        assertDoesNotThrow(() -> new DevelopmentRedisCredentialsValidator(environment));
+    }
+
+    @Test
+    void rejectsMissingOrBlankDevelopmentCredentialsWithNamesOnly() {
+        MockEnvironment environment = new MockEnvironment()
+                .withProperty("spring.data.redis.username", " ")
+                .withProperty("spring.data.redis.password", "")
+                .withProperty("minio.access-key", "")
+                .withProperty("minio.secret-key", " ");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class,
+                () -> new DevelopmentRedisCredentialsValidator(environment));
+        assertTrue(error.getMessage().contains("REDIS_USERNAME"));
+        assertTrue(error.getMessage().contains("REDIS_PASSWORD"));
+        assertTrue(error.getMessage().contains("MINIO_ACCESS_KEY"));
+        assertTrue(error.getMessage().contains("MINIO_SECRET_KEY"));
+        assertTrue(!error.getMessage().contains("local_only_redis_app_2026"));
+    }
+
+    @Test
+    void rejectsPlaceholderRedisAndMinioCredentialsInProduction() {
+        MockEnvironment environment = validEnvironment();
+        environment.setProperty("spring.data.redis.password", "local_only_redis_app_2026");
+        environment.setProperty("minio.secret-key", "example-minio-secret");
+
+        String message = assertThrows(IllegalStateException.class,
+                () -> new ProductionConfigurationValidator(environment)).getMessage();
+        assertTrue(message.contains("REDIS_PASSWORD"));
+        assertTrue(message.contains("MINIO_SECRET_KEY"));
+        assertTrue(!message.contains("local_only_redis_app_2026"));
+        assertTrue(!message.contains("example-minio-secret"));
+    }
+
+    @Test
+    void rejectsRedisDefaultAclUsernameInProduction() {
+        MockEnvironment environment = validEnvironment();
+        environment.setProperty("spring.data.redis.username", "default");
+
+        String message = assertThrows(IllegalStateException.class,
+                () -> new ProductionConfigurationValidator(environment)).getMessage();
+        assertTrue(message.contains("REDIS_USERNAME"));
+    }
+
+    @Test
+    void rejectsLocalOnlySecondaryStorageCredentialsInProduction() {
+        MockEnvironment environment = validEnvironment();
+        environment.setProperty("minidrive.storage.nodes[1].enabled", "true");
+        environment.setProperty("minidrive.storage.nodes[1].endpoint", "http://silo2.internal:9000");
+        environment.setProperty("minidrive.storage.nodes[1].access-key", "local_secondary_user");
+        environment.setProperty("minidrive.storage.nodes[1].secret-key", "local_only_secondary_minio_2026");
+        environment.setProperty("minidrive.storage.nodes[1].bucket", "private-secondary");
+
+        String message = assertThrows(IllegalStateException.class,
+                () -> new ProductionConfigurationValidator(environment)).getMessage();
+        assertTrue(message.contains("MINIO_SECONDARY_ACCESS_KEY"));
+        assertTrue(message.contains("MINIO_SECONDARY_SECRET_KEY"));
     }
 
     @Test

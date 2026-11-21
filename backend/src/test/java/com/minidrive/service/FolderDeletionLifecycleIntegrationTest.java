@@ -54,7 +54,8 @@ class FolderDeletionLifecycleIntegrationTest {
     private User owner;
     private Authentication auth;
 
-    @BeforeEach void reset() {
+    @BeforeEach void reset() throws Exception {
+        java.nio.file.Files.createDirectories(java.nio.file.Path.of("target/cleanup-journal-test"));
         for (CleanupIntentJournal.Intent intent : cleanupJournal.pending()) cleanupJournal.resolve(intent);
         jdbc.execute("DROP TABLE IF EXISTS folder_delete_guard");
         jdbc.execute("DROP TABLE IF EXISTS file_delete_guard");
@@ -118,6 +119,28 @@ class FolderDeletionLifecycleIntegrationTest {
         verify(storage, times(1)).delete("current-key");
         verify(storage).delete("old-key");
         verify(storage).delete("_uploads/owner/session/0");
+    }
+
+    @Test void multipleFilesAndHistoricalVersionsInOneFolderAreAllManifested() {
+        Folder root = folder("root", null);
+        File first = storedFile(root, "first-current", "first-current", "first-v2", "first-v3");
+        File second = storedFile(root, "second-current", "second-current", "second-v2");
+        bucket.put("first-current", new byte[]{1});
+        bucket.put("first-v2", new byte[]{2});
+        bucket.put("first-v3", new byte[]{3});
+        bucket.put("second-current", new byte[]{4});
+        bucket.put("second-v2", new byte[]{5});
+
+        assertTrue(folderService.delete(auth, root.getId()).complete());
+
+        assertFalse(files.existsById(first.getId()));
+        assertFalse(files.existsById(second.getId()));
+        assertTrue(bucket.isEmpty());
+        verify(storage).delete("first-current");
+        verify(storage).delete("first-v2");
+        verify(storage).delete("first-v3");
+        verify(storage).delete("second-current");
+        verify(storage).delete("second-v2");
     }
 
     @Test void storageOutageKeepsManifestAndMetadataThenRetryAfterRestartCompletes() {

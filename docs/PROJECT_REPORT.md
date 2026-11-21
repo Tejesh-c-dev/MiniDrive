@@ -483,7 +483,7 @@ The repository contains 10 empty (0-byte) placeholder files created during initi
 - **Transport Layer Security (TLS):** All repository configurations run over plaintext HTTP (`server.port: 8080`, Compose ports). In production, an SSL-terminating reverse proxy (Nginx, Caddy, Cloudflare, AWS ALB) must front the stack.
 - **JWT Expiration & Revocation:** Tokens are valid for 24 hours (`86,400,000 ms`). Because refresh tokens and token blacklisting are not yet implemented, a compromised token cannot be revoked before expiration.
 - **Frontend Token Storage:** The JWT is stored in browser `localStorage` (`frontend/src/utils/tokenStorage.ts`). While common, this is susceptible to Cross-Site Scripting (XSS). Moving to `HttpOnly`, `SameSite=Strict` cookies would enhance token isolation.
-- **Redis Authentication:** The Docker Compose Redis service runs without an explicit password (`requirepass`). While bound to loopback `127.0.0.1`, Redis in shared hosting environments should require authentication.
+- **Redis Authentication:** The local Docker Compose Redis service uses ACL authentication with a disabled default user and separate application and exporter identities. Production deployments must provide non-placeholder Redis credentials through the deployment environment or secret injection.
 - **Rate Limiting:** Authentication endpoints (`/api/auth/login`, `/api/auth/register`) do not have application-level brute-force throttling (e.g. Bucket4j or Redis token bucket).
 
 ### 9.3 Data Lifecycle & Storage Garbage Collection
@@ -563,9 +563,9 @@ Set-Location C:\MiniDrive\backend
 
 # Live MinIO integration test (against running Silo container)
 .\mvnw.cmd "-Plive-minio" `
-  "-Dminidrive.live-minio.endpoint=http://127.0.0.1:9000" `
-  "-Dminidrive.live-minio.access-key=minioadmin" `
-  "-Dminidrive.live-minio.secret-key=minioadmin" `
+  "-Dminidrive.live-minio.endpoint=http://127.0.0.1:9200" `
+  "-Dminidrive.live-minio.access-key=<test-access-key>" `
+  "-Dminidrive.live-minio.secret-key=<test-secret-key>" `
   "-Dtest=SiloStorageServiceRealMinioLiveTest" test
 
 # Frontend unit tests

@@ -35,7 +35,8 @@ public class ProductionConfigurationValidator {
         String url = environment.getProperty("spring.datasource.url", "").trim();
         if (!url.startsWith("jdbc:postgresql:")) invalid.add("DB_URL must be a PostgreSQL JDBC URL");
         positivePort(environment.getProperty("spring.data.redis.port"), "REDIS_PORT", invalid);
-        rejectValue(environment, "spring.data.redis.password", "change-me-redis-password", "REDIS_PASSWORD", invalid);
+        rejectPlaceholder(environment, "spring.data.redis.username", "REDIS_USERNAME", invalid);
+        rejectPlaceholder(environment, "spring.data.redis.password", "REDIS_PASSWORD", invalid);
 
         String jwt = environment.getProperty("jwt.secret", "");
         if (!jwt.isBlank() && (jwt.getBytes(StandardCharsets.UTF_8).length < 32
@@ -45,9 +46,8 @@ public class ProductionConfigurationValidator {
         rejectValue(environment, "spring.datasource.username", "minidrive", "DB_USERNAME", invalid);
         rejectValue(environment, "spring.datasource.password", "minidrive", "DB_PASSWORD", invalid);
         rejectValue(environment, "spring.datasource.password", "change-me", "DB_PASSWORD", invalid);
-        rejectValue(environment, "minio.access-key", "minioadmin", "MINIO_ACCESS_KEY", invalid);
-        rejectValue(environment, "minio.secret-key", "minioadmin", "MINIO_SECRET_KEY", invalid);
-        rejectValue(environment, "minio.secret-key", "change-me-minio-password", "MINIO_SECRET_KEY", invalid);
+        rejectPlaceholder(environment, "minio.access-key", "MINIO_ACCESS_KEY", invalid);
+        rejectPlaceholder(environment, "minio.secret-key", "MINIO_SECRET_KEY", invalid);
 
         String origins = environment.getProperty("minidrive.cors.allowed-origins", "");
         if (!origins.isBlank()) {
@@ -86,6 +86,8 @@ public class ProductionConfigurationValidator {
             require(environment, "minidrive.storage.nodes[1].access-key", "MINIO_SECONDARY_ACCESS_KEY", invalid);
             require(environment, "minidrive.storage.nodes[1].secret-key", "MINIO_SECONDARY_SECRET_KEY", invalid);
             require(environment, "minidrive.storage.nodes[1].bucket", "MINIO_SECONDARY_BUCKET", invalid);
+            rejectPlaceholder(environment, "minidrive.storage.nodes[1].access-key", "MINIO_SECONDARY_ACCESS_KEY", invalid);
+            rejectPlaceholder(environment, "minidrive.storage.nodes[1].secret-key", "MINIO_SECONDARY_SECRET_KEY", invalid);
         }
 
         if (!invalid.isEmpty()) {
@@ -108,5 +110,17 @@ public class ProductionConfigurationValidator {
 
     private static void rejectValue(Environment env, String property, String unsafe, String key, List<String> errors) {
         if (unsafe.equals(env.getProperty(property))) errors.add(key + " must not use a known development value");
+    }
+
+    private static void rejectPlaceholder(Environment env, String property, String key, List<String> errors) {
+        String value = env.getProperty(property, "").trim().toLowerCase(java.util.Locale.ROOT);
+        if (value.isEmpty()) return;
+        if (value.contains("change-me") || value.contains("changeme") || value.contains("example")
+                || value.contains("placeholder") || value.contains("local-only") || value.contains("local_")
+                || value.contains("your-") || value.contains("your_") || value.equals("password")
+                || value.equals("password123") || value.equals("secret") || value.equals("admin")
+                || value.equals("default") || value.equals("test") || value.equals("minioadmin")) {
+            errors.add(key + " must not use a known placeholder or development value");
+        }
     }
 }

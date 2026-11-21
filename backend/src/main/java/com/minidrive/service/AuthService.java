@@ -23,18 +23,21 @@ public class AuthService {
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
     private final TokenRevocationService tokenRevocationService;
+    private final RefreshTokenService refreshTokenService;
 
     public AuthService(
             UserRepository userRepository,
             PasswordEncoder passwordEncoder,
             AuthenticationManager authenticationManager,
             JwtService jwtService,
-            TokenRevocationService tokenRevocationService) {
+            TokenRevocationService tokenRevocationService,
+            RefreshTokenService refreshTokenService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.authenticationManager = authenticationManager;
         this.jwtService = jwtService;
         this.tokenRevocationService = tokenRevocationService;
+        this.refreshTokenService = refreshTokenService;
     }
 
     @Transactional
@@ -86,7 +89,7 @@ public class AuthService {
 
     /** Revokes only the currently authenticated bearer token. */
     @Transactional
-    public void logout(String authorizationHeader, Authentication authentication) {
+    public void logout(String authorizationHeader, Authentication authentication, String refreshCookie) {
         if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
             throw new IllegalArgumentException("Bearer token is required");
         }
@@ -95,7 +98,10 @@ public class AuthService {
             throw new IllegalArgumentException("Bearer token does not match authenticated user");
         }
         tokenRevocationService.revoke(token);
+        refreshTokenService.revoke(refreshCookie);
     }
+
+    public String newAccessToken(String email) { return jwtService.generateToken(email); }
 
     private String normalizeEmail(String email) {
         return email.trim().toLowerCase();

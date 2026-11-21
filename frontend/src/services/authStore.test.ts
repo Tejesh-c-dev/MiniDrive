@@ -1,21 +1,23 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ logout: vi.fn() }));
+const mocks = vi.hoisted(() => ({ logout: vi.fn(), refresh: vi.fn().mockRejectedValue(new Error('no cookie')) }));
+vi.mock('@/api/client', () => ({ refreshAccessToken: mocks.refresh }));
 vi.mock('./authService', () => ({
   login: vi.fn(), register: vi.fn(), logout: mocks.logout,
 }));
 
-import { logout, useAuth } from './authStore';
+import { authRestore, logout, useAuth } from './authStore';
+import { getToken, removeToken, setToken } from '@/utils/tokenStorage';
 import { act, renderHook } from '@testing-library/react';
 
 describe('logout', () => {
   beforeEach(() => {
-    localStorage.clear();
+    removeToken();
     mocks.logout.mockReset();
-    localStorage.setItem('minidrive_token', 'current-token');
+    setToken('current-token');
   });
-  afterEach(() => localStorage.clear());
+  afterEach(() => removeToken());
 
   it('removes local credentials immediately and reports confirmed server revocation', async () => {
     let resolveRequest!: () => void;
@@ -24,7 +26,7 @@ describe('logout', () => {
     let operation!: Promise<boolean>;
     act(() => { operation = logout(); });
 
-    expect(localStorage.getItem('minidrive_token')).toBeNull();
+    expect(getToken()).toBeNull();
     expect(result.current.authenticated).toBe(false);
     expect(mocks.logout).toHaveBeenCalledWith('current-token');
     resolveRequest();
@@ -36,8 +38,23 @@ describe('logout', () => {
     const { result } = renderHook(() => useAuth());
     let operation!: Promise<boolean>;
     act(() => { operation = logout(); });
-    expect(localStorage.getItem('minidrive_token')).toBeNull();
+    expect(getToken()).toBeNull();
     expect(result.current.authenticated).toBe(false);
     await expect(operation).resolves.toBe(false);
   });
+});
+
+it('does not persist access tokens in Web Storage', () => {
+  setToken('volatile-token');
+  expect(getToken()).toBe('volatile-token');
+  expect(localStorage.length).toBe(0);
+  expect(sessionStorage.length).toBe(0);
+  removeToken();
+});
+
+it('attempts cookie restoration before guarded routes are marked ready', async () => {
+  await authRestore;
+  const { result } = renderHook(() => useAuth());
+  expect(result.current.ready).toBe(true);
+  expect(result.current.authenticated).toBe(false);
 });

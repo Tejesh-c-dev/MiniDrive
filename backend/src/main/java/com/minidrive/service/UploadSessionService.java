@@ -349,8 +349,16 @@ public class UploadSessionService {
                 uploadChunkRepository.findBySessionIdOrderByChunkIndexAsc(session.getId());
 
         for (UploadChunk chunk : chunks) {
+            // The session row lock serializes abort with ingestion across
+            // application instances. The per-object lock also serializes this
+            // delete with cleanup-journal replay, which may be running in a
+            // different instance after a storage/DB failure.
+            String stagingKey = chunk.getStagingObjectKey();
             try {
-                storageService.delete(chunk.getStagingObjectKey());
+                try (CleanupIntentJournal.LockHandle ignored = cleanupJournal.acquire(stagingKey)) {
+                    storageService.delete(stagingKey);
+                    cleanupJournal.resolve(stagingKey);
+                }
                 event("staging_cleanup", "success");
             } catch (RuntimeException cleanupFailure) {
                 event("staging_cleanup", "failure");

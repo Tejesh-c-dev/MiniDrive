@@ -4,6 +4,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
 import org.springframework.security.authentication.BadCredentialsException;
+import com.minidrive.service.RefreshTokenRejectedException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.dao.PessimisticLockingFailureException;
 
@@ -21,6 +22,11 @@ import org.slf4j.LoggerFactory;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(RefreshTokenRejectedException.class)
+    public ResponseEntity<?> handleRefreshRejected() {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Refresh token is invalid or expired"));
+    }
 
     @ExceptionHandler(RateLimitExceededException.class)
     public ResponseEntity<?> handleRateLimited(RateLimitExceededException ex) {

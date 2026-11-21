@@ -1,6 +1,6 @@
 # Disposable PostgreSQL and Silo environment
 
-This environment reuses the pinned PostgreSQL 16 and `pgsty/silo:RELEASE.2026-09-16T00-00-00Z` images from `docker-compose.yml`, and includes a dedicated Redis 7.4.2 test service. It has its own Compose project, PostgreSQL instance/database, credentials, Silo instances, named volumes, and loopback ports. Redis listens on 127.0.0.1:56439 with persistence disabled and no data volume. It does not attach to the development Compose network or volumes or affect Redis on port 56379.
+This environment reuses the pinned PostgreSQL 16 and `pgsty/silo:RELEASE.2026-09-16T00-00-00Z` images from `docker-compose.yml`, and includes a dedicated authenticated Redis 7.4.2 test service. It has its own Compose project, PostgreSQL instance/database, local-only credentials, Silo instances, named volumes, and loopback ports. Redis listens on 127.0.0.1:56439 with persistence disabled and no data volume. It does not attach to the development Compose network or volumes or affect Redis on port 56379.
 
 From the repository root in PowerShell:
 
@@ -14,6 +14,8 @@ Use these explicit settings for the application and opt-in test classes:
 ```text
 REDIS_HOST=127.0.0.1
 REDIS_PORT=56439
+REDIS_USERNAME=local_minidrive_app
+REDIS_PASSWORD=local_only_redis_app_2026
 DB_URL=jdbc:postgresql://127.0.0.1:55439/minidrive_it
 DB_USERNAME=md_it
 DB_PASSWORD=md_it_2026_disposable

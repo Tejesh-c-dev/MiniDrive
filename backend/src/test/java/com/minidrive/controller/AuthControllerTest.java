@@ -4,6 +4,9 @@ package com.minidrive.controller;
 import com.minidrive.entity.User;
 import com.minidrive.repository.UserRepository;
 import com.minidrive.repository.RevokedTokenRepository;
+import com.minidrive.repository.RefreshTokenRepository;
+import com.minidrive.service.RefreshTokenService;
+import com.minidrive.entity.RefreshToken;
 import com.minidrive.entity.RevokedToken;
 import com.minidrive.security.JwtService;
 import com.minidrive.service.TokenRevocationService;
@@ -18,6 +21,8 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import com.minidrive.security.RateLimitService;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
@@ -41,11 +46,14 @@ class AuthControllerTest {
     @Autowired private JwtService jwtService;
     @Autowired private RevokedTokenRepository revokedTokenRepository;
     @Autowired private TokenRevocationService tokenRevocationService;
+    @Autowired private RefreshTokenRepository refreshTokenRepository;
+    @MockitoBean private RateLimitService rateLimitService;
     @Value("${jwt.secret}") private String jwtSecret;
 
     @BeforeEach
     void cleanup() {
         revokedTokenRepository.deleteAll();
+        refreshTokenRepository.deleteAll();
         userRepository.deleteAll();
     }
 
@@ -94,6 +102,113 @@ class AuthControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.token").isNotEmpty())
                 .andExpect(jsonPath("$.email").value("tejesh@test.com"));
+    }
+
+    @Test
+    void refreshRotatesOpaqueCookieAndPersistsOnlyItsHash() throws Exception {
+        var login = mockMvc.perform(register("Tejesh", "tejesh@test.com", PASSWORD))
+                .andExpect(status().isCreated()).andReturn().getResponse();
+        String original = login.getCookie("minidrive_refresh").getValue();
+        org.junit.jupiter.api.Assertions.assertTrue(login.getHeader("Set-Cookie").contains("Path=/api/auth"));
+        org.junit.jupiter.api.Assertions.assertTrue(login.getHeader("Set-Cookie").contains("HttpOnly"));
+        org.junit.jupiter.api.Assertions.assertTrue(login.getHeader("Set-Cookie").contains("SameSite=Lax"));
+        org.junit.jupiter.api.Assertions.assertTrue(login.getHeader("Set-Cookie").contains("Max-Age=2592000"));
+        org.junit.jupiter.api.Assertions.assertEquals(1, refreshTokenRepository.count());
+        org.junit.jupiter.api.Assertions.assertTrue(refreshTokenRepository.existsById(RefreshTokenService.hash(original)));
+        org.junit.jupiter.api.Assertions.assertFalse(refreshTokenRepository.existsById(original));
+
+        var rotated = mockMvc.perform(post("/api/auth/refresh").header("X-Requested-With", "XMLHttpRequest").cookie(login.getCookie("minidrive_refresh")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.token").isNotEmpty()).andReturn().getResponse();
+        org.junit.jupiter.api.Assertions.assertNotEquals(original, rotated.getCookie("minidrive_refresh").getValue());
+        org.junit.jupiter.api.Assertions.assertTrue(rotated.getHeader("Set-Cookie").contains("Path=/api/auth"));
+        org.junit.jupiter.api.Assertions.assertTrue(rotated.getHeader("Set-Cookie").contains("HttpOnly"));
+        org.junit.jupiter.api.Assertions.assertTrue(rotated.getHeader("Set-Cookie").contains("SameSite=Lax"));
+        org.junit.jupiter.api.Assertions.assertTrue(rotated.getHeader("Set-Cookie").contains("Max-Age=2592000"));
+        org.junit.jupiter.api.Assertions.assertEquals(2, refreshTokenRepository.count());
+    }
+
+    @org.junit.jupiter.api.Test
+    void accessTokensExpireAfterFifteenMinutes() throws Exception {
+        var expiration = jwtService.parseValidatedToken(jwtService.generateToken("user@test.com")).expiresAt();
+        long remaining = java.time.Duration.between(java.time.Instant.now(), expiration).toSeconds();
+        org.junit.jupiter.api.Assertions.assertTrue(remaining <= 900);
+        org.junit.jupiter.api.Assertions.assertTrue(remaining > 890);
+    }
+
+    @Test
+    void refreshCookieRequiresNonSimpleRequestHeaderForCsrfProtection() throws Exception {
+        var login = mockMvc.perform(register("Tejesh", "tejesh@test.com", PASSWORD))
+                .andExpect(status().isCreated()).andReturn().getResponse();
+        mockMvc.perform(post("/api/auth/refresh").cookie(login.getCookie("minidrive_refresh")))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/auth/refresh").header("X-Requested-With", "XMLHttpRequest")
+                        .cookie(login.getCookie("minidrive_refresh")))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void replayRevokesTheRefreshFamilyAndMalformedOrExpiredCookiesAreUnauthorized() throws Exception {
+        var login = mockMvc.perform(register("Tejesh", "tejesh@test.com", PASSWORD))
+                .andExpect(status().isCreated()).andReturn().getResponse();
+        var original = login.getCookie("minidrive_refresh");
+        var rotated = mockMvc.perform(post("/api/auth/refresh").header("X-Requested-With", "XMLHttpRequest").cookie(original)).andExpect(status().isOk()).andReturn().getResponse();
+        mockMvc.perform(post("/api/auth/refresh").header("X-Requested-With", "XMLHttpRequest").cookie(original)).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/auth/refresh").header("X-Requested-With", "XMLHttpRequest").cookie(rotated.getCookie("minidrive_refresh")))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.error").value("Refresh token is invalid or expired"));
+        mockMvc.perform(post("/api/auth/refresh").header("X-Requested-With", "XMLHttpRequest").cookie(new jakarta.servlet.http.Cookie("minidrive_refresh", "malformed")))
+                .andExpect(status().isUnauthorized());
+        org.junit.jupiter.api.Assertions.assertTrue(refreshTokenRepository.findAll().stream().allMatch(t -> t.getRevokedAt() != null));
+    }
+
+    @Test
+    void expiredRefreshTokenIsRejectedAndLogoutRevokesItsSessionAndAccessJwt() throws Exception {
+        var login = mockMvc.perform(register("Tejesh", "tejesh@test.com", PASSWORD))
+                .andExpect(status().isCreated()).andReturn().getResponse();
+        String raw = login.getCookie("minidrive_refresh").getValue();
+        String access = login.getContentAsString().split("\\\"token\\\":\\\"")[1].split("\\\"")[0];
+        mockMvc.perform(post("/api/auth/logout").header("Authorization", "Bearer " + access)
+                        .cookie(login.getCookie("minidrive_refresh")))
+                .andExpect(status().isNoContent())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                        .string("Set-Cookie", containsString("Max-Age=0")))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                        .string("Set-Cookie", containsString("Path=/api/auth")))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                        .string("Set-Cookie", containsString("SameSite=Lax")));
+        mockMvc.perform(get("/api/auth/me").header("Authorization", "Bearer " + access)).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/api/auth/refresh").header("X-Requested-With", "XMLHttpRequest").cookie(login.getCookie("minidrive_refresh"))).andExpect(status().isUnauthorized());
+
+        User user = userRepository.findByEmail("tejesh@test.com").orElseThrow();
+        String expiredRaw = "A".repeat(43);
+        refreshTokenRepository.saveAndFlush(new RefreshToken(RefreshTokenService.hash(expiredRaw),
+                java.util.UUID.randomUUID(), user.getId(), java.time.Instant.now().minusSeconds(1)));
+        mockMvc.perform(post("/api/auth/refresh").header("X-Requested-With", "XMLHttpRequest").cookie(new jakarta.servlet.http.Cookie("minidrive_refresh", expiredRaw)))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void concurrentRefreshesAllowOnlyOneRotationAndRejectTheReplayedFamily() throws Exception {
+        var login = mockMvc.perform(register("Tejesh", "tejesh@test.com", PASSWORD))
+                .andExpect(status().isCreated()).andReturn().getResponse();
+        var cookie = login.getCookie("minidrive_refresh");
+        var gate = new java.util.concurrent.CountDownLatch(1);
+        var pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var first = pool.submit(() -> {
+                gate.await();
+                return mockMvc.perform(post("/api/auth/refresh").header("X-Requested-With", "XMLHttpRequest").cookie(cookie)).andReturn().getResponse();
+            });
+            var second = pool.submit(() -> {
+                gate.await();
+                return mockMvc.perform(post("/api/auth/refresh").header("X-Requested-With", "XMLHttpRequest").cookie(cookie)).andReturn().getResponse();
+            });
+            gate.countDown();
+            int a = first.get(10, java.util.concurrent.TimeUnit.SECONDS).getStatus();
+            int b = second.get(10, java.util.concurrent.TimeUnit.SECONDS).getStatus();
+            org.junit.jupiter.api.Assertions.assertTrue((a == 200 && b == 401) || (a == 401 && b == 200));
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     @Test

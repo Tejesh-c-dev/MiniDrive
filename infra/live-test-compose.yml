@@ -1,11 +1,18 @@
 services:
   redis-test:
     image: redis:7.4.2-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        printf 'user default off\nuser %s on >%s ~* &* +@all\n' "$$REDIS_TEST_USERNAME" "$$REDIS_TEST_PASSWORD" > /tmp/users.acl
+        exec redis-server --save '' --appendonly no --aclfile /tmp/users.acl
+    environment:
+      REDIS_TEST_USERNAME: local_minidrive_app
+      REDIS_TEST_PASSWORD: local_only_redis_app_2026
     ports:
       - "127.0.0.1:56439:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli --user \"$$REDIS_TEST_USERNAME\" --pass \"$$REDIS_TEST_PASSWORD\" ping 2>/dev/null | grep -q PONG"]
       interval: 2s
       timeout: 2s
       retries: 20

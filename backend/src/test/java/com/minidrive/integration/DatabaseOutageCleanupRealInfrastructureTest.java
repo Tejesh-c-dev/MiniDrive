@@ -84,8 +84,8 @@ class DatabaseOutageCleanupRealInfrastructureTest {
     @DynamicPropertySource
     static void liveInfrastructureProperties(DynamicPropertyRegistry properties) {
         properties.add("minio.endpoint", () -> System.getenv().getOrDefault("MINIO_ENDPOINT", "http://127.0.0.1:9000"));
-        properties.add("minio.access-key", () -> System.getenv().getOrDefault("MINIO_ACCESS_KEY", "minioadmin"));
-        properties.add("minio.secret-key", () -> System.getenv().getOrDefault("MINIO_SECRET_KEY", "minioadmin"));
+        properties.add("minio.access-key", () -> System.getenv().getOrDefault("MINIO_ACCESS_KEY", "md_it_silo"));
+        properties.add("minio.secret-key", () -> System.getenv().getOrDefault("MINIO_SECRET_KEY", "md_it_silo_2026_disposable"));
         properties.add("minio.bucket", () -> System.getenv().getOrDefault("MINIO_BUCKET", "minidrive-files"));
     }
 
@@ -105,8 +105,8 @@ class DatabaseOutageCleanupRealInfrastructureTest {
         bucket = System.getProperty("MINIO_BUCKET", System.getenv().getOrDefault("MINIO_BUCKET", "minidrive-files"));
         minio = MinioClient.builder()
                 .endpoint(System.getenv().getOrDefault("MINIO_ENDPOINT", "http://127.0.0.1:9000"))
-                .credentials(System.getenv().getOrDefault("MINIO_ACCESS_KEY", "minioadmin"),
-                        System.getenv().getOrDefault("MINIO_SECRET_KEY", "minioadmin"))
+                .credentials(System.getenv().getOrDefault("MINIO_ACCESS_KEY", "md_it_silo"),
+                        System.getenv().getOrDefault("MINIO_SECRET_KEY", "md_it_silo_2026_disposable"))
                 .build();
         auth = new UsernamePasswordAuthenticationToken(owner.getEmail(), "");
         fileCountBeforeTestData = files.count();

@@ -42,8 +42,8 @@ class RoutingStorageDeletionRealInfrastructureTest {
         String primaryBucket = System.getenv().getOrDefault("MINIO_BUCKET", "minidrive-files");
         String secondaryEndpoint = System.getenv().getOrDefault("MINIO_SECONDARY_ENDPOINT", "http://127.0.0.1:9100");
         String secondaryBucket = System.getenv().getOrDefault("MINIO_SECONDARY_BUCKET", "minidrive-files-secondary");
-        String access = System.getenv().getOrDefault("MINIO_ACCESS_KEY", "minioadmin");
-        String secret = System.getenv().getOrDefault("MINIO_SECRET_KEY", "minioadmin");
+        String access = System.getenv().getOrDefault("MINIO_ACCESS_KEY", "md_it_silo");
+        String secret = System.getenv().getOrDefault("MINIO_SECRET_KEY", "md_it_silo_2026_disposable");
         String key = "_md002-verify/" + UUID.randomUUID();
         byte[] bytes = "md002-real-silo-content".getBytes(StandardCharsets.UTF_8);
         DriverManagerDataSource dataSource = new DriverManagerDataSource(dbUrl, dbUser, dbPassword);

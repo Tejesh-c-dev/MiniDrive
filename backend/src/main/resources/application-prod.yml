@@ -23,6 +23,11 @@ minio:
   bucket: ${MINIO_BUCKET:}
 
 minidrive:
+  security:
+    # Enable only when the public deployment guarantees HTTPS for this host.
+    hsts-enabled: ${MINIDRIVE_HTTPS_GUARANTEED:false}
+  auth:
+    cookie-secure: true
   cors:
     allowed-origins: ${MINIDRIVE_CORS_ALLOWED_ORIGINS:}
   rate-limit:

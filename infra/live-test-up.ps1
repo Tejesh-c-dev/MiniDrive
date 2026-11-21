@@ -16,7 +16,7 @@ try {
   for ($i = 0; $i -lt 40; $i++) {
     docker exec $postgres pg_isready -U md_it -d minidrive_it *> $null
     $pgReady = $LASTEXITCODE -eq 0
-    docker exec $redis redis-cli ping *> $null
+    docker exec $redis redis-cli --user local_minidrive_app --pass local_only_redis_app_2026 ping *> $null
     $redisReady = $LASTEXITCODE -eq 0
     docker exec $primary curl -fsS http://localhost:9000/minio/health/live *> $null
     $primaryReady = $LASTEXITCODE -eq 0
@@ -28,7 +28,7 @@ try {
   if (!$ready) { throw 'Disposable PostgreSQL/Silo health checks did not become ready.' }
   docker compose --project-directory $repo --project-name $project -f $compose ps
   Write-Host "Project: $project"
-  Write-Host 'REDIS_HOST=127.0.0.1; REDIS_PORT=56439 (disposable, no data volume)'
+  Write-Host 'REDIS_HOST=127.0.0.1; REDIS_PORT=56439; REDIS_USERNAME=local_minidrive_app; REDIS_PASSWORD=local_only_redis_app_2026 (disposable, no data volume)'
   Write-Host 'DB_URL=jdbc:postgresql://127.0.0.1:55439/minidrive_it'
   Write-Host 'DB_USERNAME=md_it; DB_PASSWORD=md_it_2026_disposable'
   Write-Host 'MINIO_ENDPOINT=http://127.0.0.1:9200; MINIO_ACCESS_KEY=md_it_silo; MINIO_SECRET_KEY=md_it_silo_2026_disposable; MINIO_BUCKET=minidrive-it-primary'

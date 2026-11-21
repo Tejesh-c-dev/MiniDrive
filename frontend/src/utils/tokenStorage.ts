@@ -1,23 +1,18 @@
-/**
- * JWT token persistence. All storage access for the auth token lives here —
- * do not call localStorage directly elsewhere in the app.
- */
-
-const TOKEN_KEY = 'minidrive_token';
+/** Access JWTs stay in this module's memory for this page lifetime only. */
+let token: string | null = null;
 
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return token;
 }
 
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
+export function setToken(value: string): void {
+  token = value;
 }
 
 export function removeToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
+  token = null;
 }
 
-/** Whether a non-empty token is currently stored. */
 export function isAuthenticated(): boolean {
-  return getToken() !== null && getToken() !== '';
+  return token !== null && token !== '';
 }

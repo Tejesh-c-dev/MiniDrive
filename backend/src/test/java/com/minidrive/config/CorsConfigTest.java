@@ -27,7 +27,7 @@ class CorsConfigTest {
     }
 
     @Test
-    void policyUsesExactOriginsAndNarrowMethodsHeadersWithoutCredentials() {
+    void policyUsesExactOriginsAndNarrowMethodsHeadersWithCookieCredentials() {
         CorsConfigurationSource source = new CorsConfig(
                 "https://drive.example.test,http://localhost:5173").corsConfigurationSource();
         CorsConfiguration policy = source.getCorsConfiguration(
@@ -38,8 +38,8 @@ class CorsConfigTest {
         assertNull(policy.checkOrigin("http://drive.example.test"));
         assertNull(policy.checkOrigin("https://drive.example.test:8443"));
         assertEquals(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"), policy.getAllowedMethods());
-        assertEquals(List.of("Authorization", "Content-Type"), policy.getAllowedHeaders());
-        assertFalse(policy.getAllowCredentials());
+        assertEquals(List.of("Authorization", "Content-Type", "X-Requested-With"), policy.getAllowedHeaders());
+        assertTrue(policy.getAllowCredentials());
         assertNull(policy.getExposedHeaders());
     }
 }

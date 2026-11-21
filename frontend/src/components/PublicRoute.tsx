@@ -6,7 +6,9 @@ import { useAuth } from '@/services/authStore';
  * to /drive instead of seeing the auth pages again.
  */
 export default function PublicRoute() {
-  const { authenticated } = useAuth();
+  const { authenticated, ready } = useAuth();
+
+  if (!ready) return null;
 
   if (authenticated) {
     return <Navigate to="/drive" replace />;

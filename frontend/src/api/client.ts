@@ -2,7 +2,7 @@ import axios, {
   type AxiosInstance,
   type InternalAxiosRequestConfig,
 } from 'axios';
-import { getToken, removeToken } from '@/utils/tokenStorage';
+import { getToken, removeToken, setToken } from '@/utils/tokenStorage';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string | undefined;
 
@@ -25,7 +25,24 @@ if (!API_BASE_URL) {
  */
 export const apiClient: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
+  withCredentials: true,
 });
+
+let refreshInFlight: Promise<string> | null = null;
+
+/** Restore or refresh the in-memory access token using the HttpOnly cookie. */
+export function refreshAccessToken(): Promise<string> {
+  if (!refreshInFlight) {
+    refreshInFlight = axios.post<{ token: string }>(`${API_BASE_URL}/api/auth/refresh`, undefined, {
+      withCredentials: true,
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+    })
+      .then(({ data }) => { setToken(data.token); return data.token; })
+      .catch((error: unknown) => { removeToken(); throw error; })
+      .finally(() => { refreshInFlight = null; });
+  }
+  return refreshInFlight;
+}
 
 /**
  * Attach "Authorization: Bearer <JWT>" when a token exists. The header is
@@ -47,10 +64,22 @@ apiClient.interceptors.request.use((config: InternalAxiosRequestConfig) => {
  */
 apiClient.interceptors.response.use(
   (response) => response,
-  (error: unknown) => {
+  async (error: unknown) => {
     if (axios.isAxiosError(error) && error.response?.status === 401) {
       const isLogoutRequest = error.config?.url?.replace(/^\//, '') === 'api/auth/logout';
-      if (!isLogoutRequest) {
+      const isAuthRequest = /api\/auth\/(login|register|refresh)$/.test(error.config?.url ?? '');
+      const config = error.config as (InternalAxiosRequestConfig & { _refreshRetried?: boolean }) | undefined;
+      if (!isLogoutRequest && !isAuthRequest && config && !config._refreshRetried) {
+        config._refreshRetried = true;
+        try {
+          const token = await refreshAccessToken();
+          config.headers.set('Authorization', `Bearer ${token}`);
+          return apiClient(config);
+        } catch {
+          removeToken();
+          window.dispatchEvent(new Event('minidrive:unauthorized'));
+        }
+      } else if (!isLogoutRequest && !isAuthRequest) {
         removeToken();
         window.dispatchEvent(new Event('minidrive:unauthorized'));
       }

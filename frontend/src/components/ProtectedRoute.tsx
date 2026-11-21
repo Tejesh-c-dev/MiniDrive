@@ -6,7 +6,9 @@ import { useAuth } from '@/services/authStore';
  * users are redirected to /login; the route itself enforces auth.
  */
 export default function ProtectedRoute() {
-  const { authenticated } = useAuth();
+  const { authenticated, ready } = useAuth();
+
+  if (!ready) return null;
 
   if (!authenticated) {
     return <Navigate to="/login" replace />;

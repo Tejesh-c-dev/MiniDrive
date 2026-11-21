@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import { refreshAccessToken } from '@/api/client';
 import {
   getToken,
   removeToken,
@@ -23,6 +24,7 @@ type Listener = () => void;
 export interface AuthState {
   readonly authenticated: boolean;
   readonly token: string | null;
+  readonly ready: boolean;
 }
 
 const listeners = new Set<Listener>();
@@ -30,7 +32,8 @@ const listeners = new Set<Listener>();
 /** Cached snapshot + token mirror: useSyncExternalStore requires getSnapshot
  * to return a stable reference while the token is unchanged. */
 let cachedToken: string | null | undefined;
-let cachedSnapshot: AuthState = { authenticated: false, token: null };
+let ready = false;
+let cachedSnapshot: AuthState = { authenticated: false, token: null, ready: false };
 
 function notify(): void {
   for (const listener of listeners) {
@@ -45,10 +48,24 @@ function getSnapshot(): AuthState {
     cachedSnapshot = {
       authenticated: token !== null && token !== '',
       token,
+      ready,
     };
+  } else if (cachedSnapshot.ready !== ready) {
+    cachedSnapshot = { ...cachedSnapshot, ready };
   }
   return cachedSnapshot;
 }
+
+function markReady(): void {
+  ready = true;
+  cachedToken = undefined;
+  notify();
+}
+
+/** On reload, recover authentication from the HttpOnly refresh cookie. */
+export const authRestore: Promise<void> = refreshAccessToken()
+  .then(() => { markReady(); })
+  .catch(() => { removeToken(); markReady(); });
 
 function subscribe(listener: Listener): () => void {
   listeners.add(listener);
@@ -70,6 +87,7 @@ export function useAuth(): AuthState {
 /** Persist the JWT returned by register/login and update auth state. */
 function applyAuthResponse(response: AuthResponse): void {
   setToken(response.token);
+  ready = true;
   notify();
 }
 
@@ -97,6 +115,7 @@ export async function loginWithEmailAndPassword(
 export async function logout(): Promise<boolean> {
   const token = getToken();
   removeToken();
+  ready = true;
   notify();
   if (!token) return false;
   try {

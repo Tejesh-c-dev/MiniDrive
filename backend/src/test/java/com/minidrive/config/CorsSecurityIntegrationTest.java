@@ -26,12 +26,12 @@ class CorsSecurityIntegrationTest {
         mockMvc.perform(options("/api/files")
                         .header("Origin", "https://drive.example.test")
                         .header("Access-Control-Request-Method", "POST")
-                        .header("Access-Control-Request-Headers", "authorization,content-type"))
+                        .header("Access-Control-Request-Headers", "authorization,content-type,x-requested-with"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("Access-Control-Allow-Origin", "https://drive.example.test"))
                 .andExpect(header().string("Access-Control-Allow-Methods", org.hamcrest.Matchers.containsString("POST")))
-                .andExpect(header().string("Access-Control-Allow-Headers", org.hamcrest.Matchers.containsString("authorization")))
-                .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"));
+                .andExpect(header().string("Access-Control-Allow-Headers", org.hamcrest.Matchers.containsString("x-requested-with")))
+                .andExpect(header().string("Access-Control-Allow-Credentials", "true"));
 
         mockMvc.perform(options("/api/files")
                         .header("Origin", "https://admin.example.test")
@@ -64,5 +64,16 @@ class CorsSecurityIntegrationTest {
 
         mockMvc.perform(get("/api/health").header("Origin", "https://drive.example.test"))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void securityHeadersArePresentAndHstsIsOptInForHttpsDeployments() throws Exception {
+        mockMvc.perform(get("/api/health"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Content-Type-Options", "nosniff"))
+                .andExpect(header().string("Referrer-Policy", "strict-origin-when-cross-origin"))
+                .andExpect(header().string("Permissions-Policy", "camera=(), microphone=(), geolocation=()"))
+                .andExpect(header().string("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"))
+                .andExpect(header().doesNotExist("Strict-Transport-Security"));
     }
 }

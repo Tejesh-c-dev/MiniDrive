@@ -33,6 +33,14 @@ public class GlobalExceptionHandler {
     public ResponseEntity<?> handleRateLimited(RateLimitExceededException ex) {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
                 .header("Retry-After", Long.toString(ex.getRetryAfterSeconds()))
+                .body(Map.of("error", "Too many requests. Please try again later."));
+    }
+
+    @ExceptionHandler(com.minidrive.security.RateLimitExceededException.class)
+    public ResponseEntity<?> handleSecurityRateLimited(
+            com.minidrive.security.RateLimitExceededException ex) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", Integer.toString(ex.getRetryAfter()))
                 .body(Map.of("error", "Too many requests"));
     }
 

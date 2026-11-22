@@ -5,6 +5,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.HttpHeaders;
 
 import org.springframework.security.authentication.BadCredentialsException;
+import com.minidrive.service.RefreshTokenRejectedException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.dao.PessimisticLockingFailureException;
 
@@ -16,27 +17,47 @@ import com.minidrive.service.RateLimitUnavailableException;
 
 import java.util.HashMap;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    @ExceptionHandler(RefreshTokenRejectedException.class)
+    public ResponseEntity<?> handleRefreshRejected() {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("error", "Refresh token is invalid or expired"));
+    }
 
     @ExceptionHandler(RateLimitExceededException.class)
-    public ResponseEntity<?> handleRateLimit(RateLimitExceededException ex) {
+    public ResponseEntity<?> handleRateLimited(RateLimitExceededException ex) {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                .header(HttpHeaders.RETRY_AFTER, Long.toString(ex.getRetryAfterSeconds()))
-                .body(Map.of("error", "Too many requests. Please try again later."));
+                .header("Retry-After", Long.toString(ex.getRetryAfterSeconds()))
+                .body(Map.of("error", "Too many requests"));
     }
 
     @ExceptionHandler(RateLimitUnavailableException.class)
-    public ResponseEntity<?> handleRateLimitUnavailable() {
+    public ResponseEntity<?> handleRateLimitUnavailable(RateLimitUnavailableException ex) {
+        log.warn("Rate-limit store unavailable; rejecting protected request");
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .body(Map.of("error", "Request protection is temporarily unavailable"));
+                .body(Map.of("error", "Service temporarily unavailable"));
     }
+
 
     @ExceptionHandler({OptimisticLockingFailureException.class, PessimisticLockingFailureException.class})
     public ResponseEntity<?> handleConcurrencyConflict(RuntimeException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Map.of("error", "The resource was changed by another request; retry with the latest state"));
+    }
+
+    @ExceptionHandler(FolderDeletionInProgressException.class)
+    public ResponseEntity<?> handleFolderDeletionInProgress(FolderDeletionInProgressException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(UploadChunkConflictException.class)
+    public ResponseEntity<?> handleUploadChunkConflict(UploadChunkConflictException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", ex.getMessage()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
@@ -82,6 +103,17 @@ public class GlobalExceptionHandler {
     public ResponseEntity<?> handleStorage(StorageException ex) {
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                 .body(Map.of("error", "File storage operation failed"));
+    }
+
+    @ExceptionHandler(SpoolRejectedException.class)
+    public ResponseEntity<?> handleSpoolRejected(SpoolRejectedException ex) {
+        if (ex.getReason() == SpoolRejectedException.Reason.TOO_LARGE) {
+            return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                    .body(Map.of("error", "Upload exceeds the configured replication spool size limit"));
+        }
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .header("Retry-After", "5")
+                .body(Map.of("error", "Replication upload capacity is temporarily unavailable"));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

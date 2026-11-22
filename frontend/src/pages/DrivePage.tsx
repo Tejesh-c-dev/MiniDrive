@@ -5,8 +5,9 @@ import {
   downloadFile,
   renameFile,
   replaceFileContent,
+  deleteFile,
 } from '@/api/files';
-import { listFolders, createFolder, renameFolder } from '@/api/folders';
+import { listFolders, createFolder, renameFolder, deleteFolder } from '@/api/folders';
 import { useAuth, logout } from '@/services/authStore';
 import { useDriveLocation } from '@/hooks/useDriveLocation';
 import type { ApiError } from '@/types/api';
@@ -19,6 +20,7 @@ import FolderCard from '@/components/drive/FolderCard';
 import LoadingState from '@/components/drive/LoadingState';
 import NewFolderDialog from '@/components/drive/NewFolderDialog';
 import RenameDialog from '@/components/drive/RenameDialog';
+import DeleteDialog, { type DeleteTarget } from '@/components/drive/DeleteDialog';
 import ShareDialog from '@/components/sharing/ShareDialog';
 import VersionHistoryDialog from '@/components/files/VersionHistoryDialog';
 import UploadState from '@/components/drive/UploadState';
@@ -33,7 +35,7 @@ import type { ResumableUploadRecord } from '@/uploads/resumeStore';
  * Location is URL-driven (/drive, /drive/folders/:folderId); both lists are
  * re-fetched per location. Upload goes to the current folder (or root).
  * Rename is available for folders/files; Share (Phase 6.2) opens a dialog to
- * manage a file's collaborators. Delete arrives in a later phase.
+ * manage a file's collaborators.
  *
  * The file list is owner-scoped by the backend, so every listed file belongs
  * to the current user and is safe to offer sharing controls for; the backend
@@ -50,6 +52,11 @@ export default function DrivePage() {
   const [foldersError, setFoldersError] = useState<ApiError | null>(null);
   const [filesError, setFilesError] = useState<ApiError | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [sortBy, setSortBy] = useState('name');
+  const [preview, setPreview] = useState<{ file: FileSummary; url: string; kind: 'image' | 'text' | 'pdf' } | null>(null);
+  const previewRequest = useRef(0);
   const [downloadError, setDownloadError] = useState<ApiError | null>(null);
   const upload = useResumableUpload();
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
@@ -64,6 +71,11 @@ export default function DrivePage() {
   const [renamingFile, setRenamingFile] = useState<FileSummary | null>(null);
   const [sharingFile, setSharingFile] = useState<FileSummary | null>(null);
   const [historyFile, setHistoryFile] = useState<FileSummary | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [deletionNotice, setDeletionNotice] = useState<string | null>(null);
+  const [pendingDeletions, setPendingDeletions] = useState<
+    Record<string, DeleteTarget['kind']>
+  >({});
   const [replaceTarget, setReplaceTarget] = useState<FileSummary | null>(null);
   const [replacingId, setReplacingId] = useState<string | null>(null);
   const [replaceError, setReplaceError] = useState<ApiError | null>(null);
@@ -223,6 +235,34 @@ export default function DrivePage() {
     [renamingFileTarget, refresh],
   );
 
+  const handleDelete = useCallback(async () => {
+    const target = deleteTarget;
+    if (target === null || target.id in pendingDeletions) return;
+    setDeletionNotice(null);
+    const result = target.kind === 'file'
+      ? await deleteFile(target.id)
+      : await deleteFolder(target.id);
+
+    if (result.complete) {
+      setDeletionNotice(`${target.kind === 'file' ? 'File' : 'Folder'} “${target.name}” deleted.`);
+    } else {
+      // A 202 means the durable lifecycle accepted the job but has not yet
+      // removed the metadata. Keep the target visible and prevent resubmission.
+      setPendingDeletions((current) => ({ ...current, [target.id]: target.kind }));
+      setDeletionNotice(`Deletion of “${target.name}” is still processing. It will disappear when cleanup completes.`);
+    }
+    refresh();
+  }, [deleteTarget, pendingDeletions, refresh]);
+
+  // A 202 response means the lifecycle has accepted durable cleanup work.
+  // Poll only while such work is pending so the row/card disappears as soon
+  // as a later authoritative listing confirms metadata finalization.
+  useEffect(() => {
+    if (Object.keys(pendingDeletions).length === 0) return;
+    const timer = window.setInterval(refresh, 4000);
+    return () => window.clearInterval(timer);
+  }, [pendingDeletions, refresh]);
+
   // Create the folder in the current location via the shared API module (the
   // dialog handles trimming/validation; submit rejections surface its error).
   const handleCreateFolder = useCallback(
@@ -249,7 +289,22 @@ export default function DrivePage() {
     setFilesError(null);
     const folderPromise = listFolders(folderId ?? undefined)
       .then((data) => {
-        if (!cancelled) setFolders(data);
+        if (!cancelled) {
+          setFolders(data);
+          setPendingDeletions((current) => {
+            const remaining = Object.fromEntries(
+              Object.entries(current).filter(
+                ([id, kind]) => kind !== 'folder' || data.some((folder) => folder.id === id),
+              ),
+            );
+            return Object.keys(current).length === Object.keys(remaining).length
+              ? current
+              : remaining;
+          });
+          if (Object.entries(pendingDeletions).some(
+            ([id, kind]) => kind === 'folder' && !data.some((folder) => folder.id === id),
+          )) setDeletionNotice('Cleanup completed. The deleted item is no longer in this listing.');
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) setFoldersError(err as ApiError);
@@ -257,7 +312,22 @@ export default function DrivePage() {
 
     const filePromise = listFiles(folderId ?? undefined)
       .then((data) => {
-        if (!cancelled) setFiles(data);
+        if (!cancelled) {
+          setFiles(data);
+          setPendingDeletions((current) => {
+            const remaining = Object.fromEntries(
+              Object.entries(current).filter(
+                ([id, kind]) => kind !== 'file' || data.some((file) => file.id === id),
+              ),
+            );
+            return Object.keys(current).length === Object.keys(remaining).length
+              ? current
+              : remaining;
+          });
+          if (Object.entries(pendingDeletions).some(
+            ([id, kind]) => kind === 'file' && !data.some((file) => file.id === id),
+          )) setDeletionNotice('Cleanup completed. The deleted item is no longer in this listing.');
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) setFilesError(err as ApiError);
@@ -268,11 +338,11 @@ export default function DrivePage() {
       void folderPromise;
       void filePromise;
     };
-  }, [folderId, refreshTick]);
+  }, [folderId, pendingDeletions, refreshTick]);
 
-  const handleLogout = () => {
-    logout();
-    navigate('/login', { replace: true });
+  const handleLogout = async () => {
+    const revoked = await logout();
+    navigate('/login', { replace: true, state: { serverRevoked: revoked } });
   };
 
   const handleDownload = async (file: FileSummary) => {
@@ -294,6 +364,28 @@ export default function DrivePage() {
       setDownloadingId(null);
     }
   };
+
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
+  useEffect(() => () => { previewRequest.current += 1; }, []);
+  const closePreview = () => { previewRequest.current += 1; setPreview(null); };
+  const handlePreview = async (file: FileSummary) => {
+    closePreview();
+    setDownloadError(null);
+    const mime = file.contentType.split(';')[0].trim().toLowerCase();
+    const kind = mime === 'image/png' || mime === 'image/jpeg' ? 'image' : mime === 'text/plain' ? 'text' : mime === 'application/pdf' ? 'pdf' : null;
+    if (!kind) { setDownloadError({ message: 'Preview is not available for this file type. Use Download instead.' } as ApiError); return; }
+    if (file.sizeBytes > 10 * 1024 * 1024) { setDownloadError({ message: 'This file is too large to preview. Use Download instead.' } as ApiError); return; }
+    const requestId = ++previewRequest.current;
+    try {
+      const blob = await downloadFile(file.id);
+      if (requestId !== previewRequest.current) return;
+      if (blob.type.split(';')[0].trim().toLowerCase() !== mime || blob.size > 10 * 1024 * 1024) throw new Error('The file type could not be verified or the file is too large to preview.');
+      const url = URL.createObjectURL(blob);
+      setPreview({ file, url, kind });
+    } catch (e) { if (requestId === previewRequest.current) setDownloadError({ message: (e as Error).message || 'Could not load preview.' } as ApiError); }
+  };
+
+  const visibleFiles = useMemo(() => (files ?? []).filter(file => file.name.toLowerCase().includes(query.trim().toLowerCase()) && (typeFilter === 'all' || (typeFilter === 'image' ? file.contentType.startsWith('image/') : typeFilter === 'pdf' ? file.contentType === 'application/pdf' : typeFilter === 'text' ? file.contentType.startsWith('text/') : !file.contentType.startsWith('image/') && !file.contentType.startsWith('text/') && file.contentType !== 'application/pdf'))).sort((a,b) => sortBy === 'size' ? a.sizeBytes-b.sizeBytes : sortBy === 'updated' ? b.updatedAt.localeCompare(a.updatedAt) : a.name.localeCompare(b.name)), [files, query, typeFilter, sortBy]);
 
   if (!authenticated) return null; // ProtectedRoute already redirects.
 
@@ -418,6 +510,12 @@ export default function DrivePage() {
       )}
       {!trailError && !showListingSkeleton && !combinedError && (
         <>
+          <div className="mt-5 flex flex-wrap gap-3 rounded-lg border bg-white p-3">
+            <label className="text-sm">Search <input aria-label="Search files" value={query} onChange={e => setQuery(e.target.value)} className="ml-2 rounded border px-2 py-1" placeholder="Filename" /></label>
+            <label className="text-sm">Type <select aria-label="File type" value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className="ml-2 rounded border px-2 py-1"><option value="all">All types</option><option value="image">Images</option><option value="text">Text</option><option value="pdf">PDFs</option><option value="other">Other</option></select></label>
+            <label className="text-sm">Sort <select aria-label="Sort files" value={sortBy} onChange={e => setSortBy(e.target.value)} className="ml-2 rounded border px-2 py-1"><option value="name">Name</option><option value="updated">Last modified</option><option value="size">Size</option></select></label>
+            {(query || typeFilter !== 'all') && <button onClick={() => { setQuery(''); setTypeFilter('all'); }} className="text-sm text-blue-700 underline">Clear filters</button>}
+          </div>
           {emptyDrive ? (
             <div className="mt-6">
               <EmptyState
@@ -438,19 +536,21 @@ export default function DrivePage() {
                         key={folder.id}
                         folder={folder}
                         onRename={setRenamingFolder}
+                        onDelete={(target) => setDeleteTarget({ kind: 'folder', id: target.id, name: target.name })}
+                        deleting={folder.id in pendingDeletions}
                       />
                     ))}
                   </div>
                 </section>
               )}
 
-              {files.length > 0 && (
+              {visibleFiles.length > 0 && (
                 <section className="mt-8" data-testid="file-section">
                   <h2 className="px-1 text-xs font-semibold uppercase tracking-wider text-gray-400">
                     Files
                   </h2>
                   <ul className="mt-2 divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white">
-                    {files.map((file) => (
+                    {visibleFiles.map((file) => (
                       <FileRow
                         key={file.id}
                         file={file}
@@ -460,11 +560,14 @@ export default function DrivePage() {
                         // enforces edit permission for replacements.
                         canEdit
                         replacing={replacingId === file.id}
+                        deleting={file.id in pendingDeletions}
                         onDownload={handleDownload}
                         onRename={setRenamingFile}
                         onShare={setSharingFile}
                         onHistory={setHistoryFile}
                         onReplace={handlePickReplacement}
+                        onDelete={(target) => setDeleteTarget({ kind: 'file', id: target.id, name: target.name })}
+                        onPreview={handlePreview}
                       />
                     ))}
                   </ul>
@@ -479,6 +582,7 @@ export default function DrivePage() {
                   />
                 </div>
               )}
+              {files.length > 0 && visibleFiles.length === 0 && <p className="mt-6 rounded border bg-white p-6 text-center text-gray-600">No files match these filters.</p>}
               {files.length === 0 && (
                 <div className="mt-6" data-testid="files-empty">
                   <EmptyState
@@ -489,6 +593,7 @@ export default function DrivePage() {
               )}
             </>
           )}
+          {preview && <div role="dialog" aria-modal="true" aria-label={`Preview ${preview.file.name}`} className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onKeyDown={e => { if (e.key === 'Escape') closePreview(); }}><div className="max-h-full w-full max-w-4xl overflow-auto rounded-lg bg-white p-4"><div className="mb-3 flex justify-between"><h2 className="font-semibold">{preview.file.name}</h2><button autoFocus onClick={closePreview} aria-label="Close preview" className="rounded border px-3 py-1">Close</button></div>{preview.kind === 'image' ? <img src={preview.url} alt={preview.file.name} className="mx-auto max-h-[75vh]" /> : preview.kind === 'text' ? <iframe title="Text file preview" sandbox="" src={preview.url} className="h-[70vh] w-full border" /> : <iframe title="PDF preview" sandbox="allow-same-origin" src={preview.url} className="h-[75vh] w-full border" />}</div></div>}
         </>
       )}
 
@@ -563,6 +668,12 @@ export default function DrivePage() {
         </p>
       )}
 
+      {deletionNotice !== null && (
+        <p role="status" data-testid="delete-notice" className="mt-4 text-sm font-medium text-blue-700">
+          {deletionNotice}
+        </p>
+      )}
+
       {downloadError && (
         <p role="alert" className="mt-4 text-sm font-medium text-red-600">
           {downloadError.message}
@@ -615,6 +726,14 @@ export default function DrivePage() {
           canEdit
           onClose={() => setHistoryFile(null)}
           onRestored={refresh}
+        />
+      )}
+
+      {deleteTarget !== null && (
+        <DeleteDialog
+          target={deleteTarget}
+          onDelete={handleDelete}
+          onClose={() => setDeleteTarget(null)}
         />
       )}
 

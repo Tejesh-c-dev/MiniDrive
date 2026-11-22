@@ -1,6 +1,7 @@
 package com.minidrive.config;
 
 import com.minidrive.security.JwtAuthenticationFilter;
+import com.minidrive.security.RateLimitFilter;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -22,23 +23,32 @@ import org.springframework.security.web.servlet.util.matcher.PathPatternRequestM
 import org.springframework.security.web.util.matcher.AndRequestMatcher;
 import org.springframework.security.web.util.matcher.IpAddressMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
+import org.springframework.security.authorization.AuthorizationDecision;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter;
 
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final RateLimitFilter rateLimitFilter;
     private final CorsConfigurationSource corsConfigurationSource;
+    private final boolean hstsEnabled;
 
     public SecurityConfig(
             JwtAuthenticationFilter jwtAuthenticationFilter,
-            CorsConfigurationSource corsConfigurationSource) {
+            RateLimitFilter rateLimitFilter,
+            CorsConfigurationSource corsConfigurationSource,
+            @Value("${minidrive.security.hsts-enabled:false}") boolean hstsEnabled) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.rateLimitFilter = rateLimitFilter;
         this.corsConfigurationSource = corsConfigurationSource;
+        this.hstsEnabled = hstsEnabled;
     }
 
     @Bean
@@ -97,16 +107,35 @@ public class SecurityConfig {
                 // Write security headers before entering that async work so
                 // HeaderWriterFilter cannot race with Tomcat while it serializes
                 // the response headers.
-                .headers(headers -> headers.withObjectPostProcessor(
-                        new ObjectPostProcessor<HeaderWriterFilter>() {
-                            @Override
-                            public <O extends HeaderWriterFilter> O postProcess(O filter) {
-                                filter.setShouldWriteHeadersEagerly(true);
-                                return filter;
-                            }
-                        }))
+                .headers(headers -> {
+                    headers.withObjectPostProcessor(new ObjectPostProcessor<HeaderWriterFilter>() {
+                        @Override
+                        public <O extends HeaderWriterFilter> O postProcess(O filter) {
+                            filter.setShouldWriteHeadersEagerly(true);
+                            return filter;
+                        }
+                    });
+                    headers.contentTypeOptions(contentType -> {});
+                    headers.referrerPolicy(referrer -> referrer.policy(
+                            ReferrerPolicyHeaderWriter.ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN));
+                    headers.frameOptions(frame -> frame.deny());
+                    headers.contentSecurityPolicy(csp -> csp.policyDirectives(
+                            "default-src 'none'; frame-ancestors 'none'"));
+                    headers.permissionsPolicy(permissions -> permissions.policy(
+                            "camera=(), microphone=(), geolocation=()"));
+                    headers.httpStrictTransportSecurity(hsts -> {
+                        if (!hstsEnabled) hsts.disable();
+                        else hsts.includeSubDomains(true).maxAgeInSeconds(31536000);
+                    });
+                })
 
                 .authorizeHttpRequests(auth -> auth
+                        // Refresh is authenticated by an ambient HttpOnly cookie,
+                        // so require a non-simple header that browsers can send only
+                        // after an allowed-origin CORS preflight.
+                        .requestMatchers(HttpMethod.POST, "/api/auth/refresh")
+                        .access((authentication, context) -> new AuthorizationDecision(
+                                "XMLHttpRequest".equals(context.getRequest().getHeader("X-Requested-With"))))
                         .requestMatchers(
                                 "/api/health",
                                 "/api/auth/register",
@@ -122,8 +151,10 @@ public class SecurityConfig {
                         .authenticated())
 
                 .addFilterBefore(
-                        jwtAuthenticationFilter,
+                        rateLimitFilter,
                         UsernamePasswordAuthenticationFilter.class);
+
+        http.addFilterAfter(jwtAuthenticationFilter, RateLimitFilter.class);
 
         return http.build();
     }

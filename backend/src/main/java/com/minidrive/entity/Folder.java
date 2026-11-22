@@ -36,6 +36,9 @@ public class Folder {
     @Column(nullable = false)
     private String name;
 
+    @Column(name = "deleting", nullable = false)
+    private boolean deleting;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -69,6 +72,10 @@ public class Folder {
     public String getName() {
         return name;
     }
+
+    public boolean isDeleting() { return deleting; }
+
+    public void markDeleting() { this.deleting = true; }
 
     public LocalDateTime getCreatedAt() {
         return createdAt;

@@ -51,6 +51,10 @@ class RoutingStorageServiceTest {
         NodeStorageClient primary=mock(NodeStorageClient.class), secondary=mock(NodeStorageClient.class);
         when(jdbc.query(anyString(), any(org.springframework.jdbc.core.ResultSetExtractor.class), any(Object[].class)))
                 .thenReturn("primary");
+        when(jdbc.query(startsWith("select size_bytes"), any(org.springframework.jdbc.core.ResultSetExtractor.class), any(Object[].class)))
+                .thenReturn(null);
+        when(jdbc.query(startsWith("select storage_node_id from object_replicas"), any(org.springframework.jdbc.core.RowMapper.class), any(Object[].class)))
+                .thenReturn(List.of());
         when(primary.download("key")).thenReturn(new ByteArrayInputStream(new byte[]{1,2,3}));
         RoutingStorageService storage=new RoutingStorageService(jdbc,
                 Map.of("primary",primary,"secondary",secondary), (key,ids)->"secondary",registry);
@@ -62,6 +66,24 @@ class RoutingStorageServiceTest {
         assertEquals(1,registry.get("minidrive_storage_node_operation_seconds").tag("operation","delete").tag("outcome","failure").tag("node_id","primary").timer().count());
         assertEquals(3.0,registry.counter("minidrive_storage_node_bytes_total","operation","download","node_id","primary").count());
         verify(jdbc,never()).update(startsWith("delete from object_locations"),any(),any());
+    }
+
+    @Test void deleteReconstructsStableRouteWhenFailedUploadLostItsLocationRow() {
+        JdbcTemplate jdbc = mock(JdbcTemplate.class);
+        NodeStorageClient primary = mock(NodeStorageClient.class);
+        NodeStorageClient secondary = mock(NodeStorageClient.class);
+        when(jdbc.query(anyString(), any(org.springframework.jdbc.core.ResultSetExtractor.class), any(Object[].class)))
+                .thenReturn(null);
+        when(jdbc.query(anyString(), any(org.springframework.jdbc.core.RowMapper.class), any(Object[].class)))
+                .thenReturn(List.of());
+        RoutingStorageService storage = new RoutingStorageService(jdbc,
+                Map.of("primary", primary, "secondary", secondary), (key, ids) -> "secondary");
+
+        storage.delete("owner/fresh-object");
+
+        verify(secondary).delete("owner/fresh-object");
+        verify(primary, never()).delete(anyString());
+        verify(jdbc).update(contains("delete from object_locations"), eq("owner/fresh-object"));
     }
 
     @Test void selectorIsDeterministicAndDistributesAcrossNodes() {

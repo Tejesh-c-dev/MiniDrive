@@ -1,64 +1,45 @@
 package com.minidrive.config;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.mock.env.MockEnvironment;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 class CorsConfigTest {
 
     @Test
-    void developmentAndTestAllowLocalhostOriginsOnArbitraryPorts() {
-        for (String profile : new String[]{"dev", "test"}) {
-            MockEnvironment environment = environment(profile);
-            CorsConfiguration cors = configuration(environment, "");
+    void acceptsOneOrMultipleConfiguredExactOrigins() {
+        assertEquals(List.of("https://drive.example.test"),
+                CorsConfig.parseOrigins("https://drive.example.test"));
+        assertEquals(List.of("https://drive.example.test", "https://admin.example.test:8443"),
+                CorsConfig.parseOrigins("https://drive.example.test, https://admin.example.test:8443"));
+    }
 
-            assertThat(cors.checkOrigin("http://localhost:5173")).isEqualTo("http://localhost:5173");
-            assertThat(cors.checkOrigin("http://127.0.0.1:4321")).isEqualTo("http://127.0.0.1:4321");
+    @Test
+    void rejectsMissingMalformedWildcardAndPathOrigins() {
+        for (String invalid : List.of("", "https://ok.example.test,", "*",
+                "https://*.example.test", "https://example.test/path", "ftp://example.test")) {
+            assertThrows(IllegalArgumentException.class, () -> CorsConfig.parseOrigins(invalid), invalid);
         }
     }
 
     @Test
-    void productionAllowsOnlyConfiguredExactOrigins() {
-        MockEnvironment environment = environment("prod");
-        CorsConfiguration cors = configuration(environment, "https://app.example.com, https://admin.example.com");
+    void policyUsesExactOriginsAndNarrowMethodsHeadersWithCookieCredentials() {
+        CorsConfigurationSource source = new CorsConfig(
+                "https://drive.example.test,http://localhost:5173").corsConfigurationSource();
+        CorsConfiguration policy = source.getCorsConfiguration(
+                new org.springframework.mock.web.MockHttpServletRequest("GET", "/api/files"));
 
-        assertThat(cors.checkOrigin("https://app.example.com")).isEqualTo("https://app.example.com");
-        assertThat(cors.checkOrigin("http://localhost:5173")).isNull();
-        assertThat(cors.checkOrigin("https://other.example.com")).isNull();
-        assertThat(cors.getAllowedOriginPatterns()).isNullOrEmpty();
-    }
-
-    @Test
-    void productionWithoutConfiguredOriginsDeniesAllOrigins() {
-        MockEnvironment environment = environment("prod");
-        CorsConfiguration cors = configuration(environment, "");
-
-        assertThat(cors.checkOrigin("http://localhost:5173")).isNull();
-        assertThat(cors.checkOrigin("https://app.example.com")).isNull();
-    }
-
-    @Test
-    void productionRejectsWildcardConfiguration() {
-        MockEnvironment environment = environment("prod");
-        CorsConfig config = new CorsConfig(environment, "*");
-
-        assertThatThrownBy(config::corsConfigurationSource)
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("must not contain wildcards");
-    }
-
-    private CorsConfiguration configuration(MockEnvironment environment, String origins) {
-        CorsConfigurationSource source = new CorsConfig(environment, origins).corsConfigurationSource();
-        return source.getCorsConfiguration(new org.springframework.mock.web.MockHttpServletRequest("GET", "/api/files"));
-    }
-
-    private MockEnvironment environment(String profile) {
-        MockEnvironment environment = new MockEnvironment();
-        environment.setActiveProfiles(profile);
-        return environment;
+        assertEquals(List.of("https://drive.example.test", "http://localhost:5173"), policy.getAllowedOrigins());
+        assertNull(policy.checkOrigin("https://evil.example.test"));
+        assertNull(policy.checkOrigin("http://drive.example.test"));
+        assertNull(policy.checkOrigin("https://drive.example.test:8443"));
+        assertEquals(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"), policy.getAllowedMethods());
+        assertEquals(List.of("Authorization", "Content-Type", "X-Requested-With"), policy.getAllowedHeaders());
+        assertTrue(policy.getAllowCredentials());
+        assertNull(policy.getExposedHeaders());
     }
 }

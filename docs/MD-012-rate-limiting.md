@@ -1,0 +1,13 @@
+# MD-012: Authentication and public share rate limiting
+
+## Policies
+
+The backend uses Redis fixed windows for `POST /api/auth/register` (20 per client IP per hour), `POST /api/auth/login` (60 per client IP and 12 per client IP plus normalized account per 15 minutes), and anonymous `GET /api/share/{token}` and `GET /api/share/{token}/download` (120 per client IP per minute). The login account bucket is deliberately paired with the source IP: a person who knows an email cannot impose a long account-wide lockout, while repeated guesses from one source are still constrained. These are initial general-purpose defaults; deployments can tune them through `MINIDRIVE_RATE_LIMIT_*` environment variables. Limits must be positive and windows may not exceed 24 hours.
+
+Each policy has its own `minidrive:ratelimit:<policy>:` namespace. Identity material is SHA-256 digested before it is used in a Redis key. A single Lua script performs `INCR` and sets `PEXPIRE` on first creation, so concurrent requests cannot separate counting from expiry. No account identifier, password, JWT, or share token is stored in Redis. The public share limit applies equally to metadata and download requests and runs before token lookup/storage work.
+
+The request IP comes from the socket by default. `X-Forwarded-For` is used only when `MINIDRIVE_RATE_LIMIT_TRUST_PROXY=true` and the socket peer matches one of `MINIDRIVE_RATE_LIMIT_TRUSTED_PROXIES` (comma-separated addresses/CIDRs). The configured proxy must append the client address it observed; the limiter selects the rightmost forwarded address to ignore client supplied leftmost values. Do not enable this setting unless ingress proxy behavior and peer addresses are controlled.
+
+Rate-limit Redis failures reject these protected requests with generic HTTP 503 responses. Redis connect and command timeouts default to one second and can be changed with `REDIS_CONNECT_TIMEOUT` and `REDIS_COMMAND_TIMEOUT`. The listing-cache fallback is independent and cannot grant access through the limiter. Over-limit requests receive generic HTTP 429 responses with `Retry-After` in seconds. The response body follows the API's `{ "error": "..." }` convention.
+
+Redis is already part of the deployment for caching; this implementation adds no infrastructure. Production availability of Redis and correct trusted-proxy configuration remain deployment responsibilities. The real Redis concurrency test verifies the Lua policy against the configured local endpoint; it does not verify production network topology or outage behavior against a running cluster. Store failure behavior is unit-tested through a failing Redis mock.

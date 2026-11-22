@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -22,6 +23,10 @@ public interface UploadSessionRepository extends JpaRepository<UploadSession, UU
      * session's existence.
      */
     Optional<UploadSession> findByIdAndOwnerId(UUID id, UUID ownerId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from UploadSession s where s.id = :id")
+    Optional<UploadSession> findByIdForUpdate(@Param("id") UUID id);
 
     Optional<UploadSession> findByOwnerIdAndCreateIdempotencyKey(UUID ownerId, String key);
 
@@ -40,6 +45,12 @@ public interface UploadSessionRepository extends JpaRepository<UploadSession, UU
 
     List<UploadSession> findByOwnerId(UUID ownerId);
 
-    /** Sessions whose expiration has passed; used by expiry/cleanup queries. */
-    List<UploadSession> findByExpiresAtBefore(LocalDateTime cutoff);
+    /** Bounded work queue: expired active sessions and previously claimed retries. */
+    @Query("select s.id from UploadSession s where " +
+            "(s.status = com.minidrive.entity.UploadSessionStatus.INITIATED and s.expiresAt <= :cutoff) " +
+            "or s.status = com.minidrive.entity.UploadSessionStatus.EXPIRED " +
+            "or (s.status = com.minidrive.entity.UploadSessionStatus.CLEANING and s.updatedAt <= :leaseCutoff) " +
+            "order by s.expiresAt, s.id")
+    List<UUID> findCleanupCandidates(@Param("cutoff") LocalDateTime cutoff,
+            @Param("leaseCutoff") LocalDateTime leaseCutoff, Pageable pageable);
 }

@@ -1,10 +1,12 @@
 spring:
+  profiles:
+    default: test
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
+      host: ${REDIS_HOST:127.0.0.1}
       port: ${REDIS_PORT:56379}
-      username: ${REDIS_USERNAME:}
-      password: ${REDIS_PASSWORD:}
+      username: ${REDIS_USERNAME:minidrive_app}
+      password: ${REDIS_PASSWORD:local_only_redis_app_2026}
   datasource:
     url: jdbc:h2:mem:minidrive;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
     driver-class-name: org.h2.Driver
@@ -20,16 +22,40 @@ spring:
 
 jwt:
   secret: test-secret-key-that-is-long-enough-for-hmac-sha
-  expiration: 86400000
+  expiration: 900000
+
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  access-key: ${MINIO_ACCESS_KEY:local_minio_user}
+  secret-key: ${MINIO_SECRET_KEY:local_only_minio_root_2026}
+  bucket: ${MINIO_BUCKET:minidrive-test-files}
 
 minidrive:
+  cors:
+    allowed-origins: http://localhost:5173,http://127.0.0.1:5173
   rate-limit:
-    login-ip: { limit: 10000, window: 15m }
-    login-account: { limit: 10000, window: 15m }
-    register-ip: { limit: 10000, window: 1h }
-    register-account: { limit: 10000, window: 24h }
-    share-ip: { limit: 10000, window: 1m }
-    share-token: { limit: 10000, window: 1m }
+    # Functional controller suites share no rate-limit scenarios; the dedicated
+    # RateLimitControllerIntegrationTest overrides this with its asserted low cap.
+    registration:
+      limit: 1000
+  cleanup-journal:
+    directory: target/test-cleanup-journal
+    retry-delay-ms: 3600000
+    initial-delay-ms: 3600000
+  storage:
+    nodes:
+      - id: primary
+        endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+        access-key: ${MINIO_ACCESS_KEY:local_minio_user}
+        secret-key: ${MINIO_SECRET_KEY:local_only_minio_root_2026}
+        bucket: ${MINIO_BUCKET:minidrive-test-files}
+        enabled: true
+      - id: secondary
+        endpoint: ${MINIO_SECONDARY_ENDPOINT:http://localhost:9100}
+        access-key: ${MINIO_SECONDARY_ACCESS_KEY:local_secondary_user}
+        secret-key: ${MINIO_SECONDARY_SECRET_KEY:local_only_secondary_minio_2026}
+        bucket: ${MINIO_SECONDARY_BUCKET:minidrive-test-secondary}
+        enabled: false
 
 management:
   metrics:

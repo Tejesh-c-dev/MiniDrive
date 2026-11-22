@@ -29,6 +29,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import java.io.ByteArrayInputStream;
 import java.time.LocalDateTime;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
@@ -462,7 +463,12 @@ class ShareLinkControllerTest {
         return mockMvc.perform(post("/api/auth/register")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"name\":\"" + name + "\",\"email\":\"" + email
-                                + "\",\"password\":\"" + PASSWORD + "\"}"))
+                                + "\",\"password\":\"" + PASSWORD + "\"}")
+                        .with(request -> {
+                            request.setRemoteAddr("198.19." + ThreadLocalRandom.current().nextInt(256) + "."
+                                    + ThreadLocalRandom.current().nextInt(1, 255));
+                            return request;
+                        }))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString()
                 .split("\"token\":\"")[1].split("\"")[0];

@@ -8,7 +8,9 @@ import org.springframework.stereotype.Service;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.Date;
+import java.util.UUID;
 
 @Service
 public class JwtService {
@@ -25,12 +27,17 @@ public class JwtService {
         this.expirationMs = expirationMs;
     }
 
+    public String generateToken(String email) {
+        return generateToken(email, 0L);
+    }
+
     public String generateToken(String email, long authVersion) {
 
         Date now = new Date();
 
         return Jwts.builder()
                 .subject(email)
+                .id(UUID.randomUUID().toString())
                 .claim("auth_version", authVersion)
                 .claim("iat_ms", now.getTime())
                 .issuedAt(now)
@@ -42,7 +49,19 @@ public class JwtService {
 
     public String extractUsername(String token) {
 
-        return extractAllClaims(token).getSubject();
+        return parseValidatedToken(token).subject();
+    }
+
+    /** Parses and verifies a signed, unexpired token with the required identifier. */
+    public ValidatedToken parseValidatedToken(String token) {
+        Claims claims = extractAllClaims(token);
+        String subject = claims.getSubject();
+        String tokenId = claims.getId();
+        Date expiration = claims.getExpiration();
+        if (subject == null || subject.isBlank() || tokenId == null || tokenId.isBlank() || expiration == null) {
+            throw new IllegalArgumentException("JWT is missing required claims");
+        }
+        return new ValidatedToken(subject, tokenId, expiration.toInstant());
     }
 
     public Date extractIssuedAt(String token) {
@@ -61,15 +80,15 @@ public class JwtService {
 
         try {
 
-            Claims claims = extractAllClaims(token);
-
-            return claims.getSubject() != null
-                    && claims.getExpiration().after(new Date());
+            parseValidatedToken(token);
+            return true;
 
         } catch (Exception e) {
             return false;
         }
     }
+
+    public record ValidatedToken(String subject, String tokenId, Instant expiresAt) {}
 
     private Claims extractAllClaims(String token) {
 

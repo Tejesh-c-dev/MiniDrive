@@ -44,3 +44,13 @@ dist/
 
 # Local database backup
 /artifacts/backups/minidrive-before-v22-20261121T173956Z.dump
+
+
+# Runtime lock state
+/backend/data/cleanup-journal/object-key-locks
+
+# TypeScript build cache
+*.tsbuildinfo
+
+# Agent skill lockfile
+/skills-lock.json

@@ -1,11 +1,13 @@
 import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { loginWithEmailAndPassword } from '@/services/authStore';
 import { toApiError } from '@/api/errors';
 import type { ApiError } from '@/types/api';
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const logoutState = location.state as { serverRevoked?: boolean } | null;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -32,6 +34,15 @@ export default function LoginPage() {
       <p className="mb-6 text-sm text-gray-600">
         Access your MiniDrive account.
       </p>
+
+      {logoutState?.serverRevoked === true && (
+        <p role="status" className="mb-4 text-sm text-green-700">This access token was revoked on the server.</p>
+      )}
+      {logoutState?.serverRevoked === false && (
+        <p role="status" className="mb-4 text-sm text-amber-800">
+          You were signed out on this device, but the server could not confirm revocation. A copied token may remain usable until it expires.
+        </p>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         <div>

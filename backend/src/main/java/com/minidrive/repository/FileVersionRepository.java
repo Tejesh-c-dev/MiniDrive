@@ -13,6 +13,8 @@ import java.util.UUID;
 
 public interface FileVersionRepository extends JpaRepository<FileVersion, UUID> {
 
+    boolean existsByObjectKey(String objectKey);
+
     List<FileVersion> findByFileIdOrderByVersionNumberAsc(UUID fileId);
 
     /** History listing order: newest revision first. */

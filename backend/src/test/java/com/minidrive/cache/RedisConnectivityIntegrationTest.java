@@ -6,8 +6,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializer;
@@ -72,12 +72,11 @@ class RedisConnectivityIntegrationTest {
     }
 
     private RedisConnectionFactory factory() {
-        RedisStandaloneConfiguration redis = new RedisStandaloneConfiguration(HOST, PORT);
-        String username = System.getenv("REDIS_USERNAME");
-        String password = System.getenv("REDIS_PASSWORD");
-        if (username != null && !username.isBlank()) redis.setUsername(username);
-        if (password != null && !password.isBlank()) redis.setPassword(password);
-        connectionFactory = new LettuceConnectionFactory(redis);
+        RedisStandaloneConfiguration server = new RedisStandaloneConfiguration(HOST, PORT);
+        server.setUsername(System.getenv().getOrDefault("REDIS_USERNAME", "minidrive_app"));
+        server.setPassword(org.springframework.data.redis.connection.RedisPassword
+                .of(System.getenv().getOrDefault("REDIS_PASSWORD", "local_only_redis_app_2026")));
+        connectionFactory = new LettuceConnectionFactory(server);
         connectionFactory.afterPropertiesSet();
         return connectionFactory;
     }
@@ -122,9 +121,7 @@ class RedisConnectivityIntegrationTest {
             // Ambient delay between set and read must leave ~60s on the clock.
             assertThat(ttl).isBetween(55L, 60L);
 
-            // Writes through the cache-layer naming convention only; no other
-            // application keys were touched by this test.
-            assertThat(template.hasKey(key)).isTrue();
+            assertThat(template.opsForValue().get(key)).isEqualTo(value);
         } finally {
             template.delete(key);
         }

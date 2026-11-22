@@ -1,0 +1,4 @@
+spring:
+  config:
+    # Local convenience only. The prod profile never imports the repository .env.
+    import: optional:file:../.env[.properties]

@@ -5,11 +5,13 @@ import io.minio.MinioClient;
 import io.minio.GetObjectArgs;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
+import io.minio.StatObjectArgs;
 import org.springframework.beans.factory.annotation.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
+import java.util.Optional;
 
 public class SiloStorageService implements StorageService {
     private static final Logger log = LoggerFactory.getLogger(SiloStorageService.class);
@@ -53,6 +55,21 @@ public class SiloStorageService implements StorageService {
         } catch (Exception e) {
             log.error("Unable to remove Silo object {}", objectKey, e);
             throw new StorageException("Unable to remove uploaded object", e);
+        }
+    }
+
+    @Override
+    public Optional<Boolean> exists(String objectKey) {
+        try {
+            client.statObject(StatObjectArgs.builder().bucket(bucket).object(objectKey).build());
+            return Optional.of(true);
+        } catch (io.minio.errors.ErrorResponseException e) {
+            String code = e.errorResponse() == null ? "" : e.errorResponse().code();
+            if ("NoSuchKey".equals(code) || "NoSuchObject".equals(code) || "NotFound".equals(code))
+                return Optional.of(false);
+            throw new StorageException("Unable to inspect stored file", e);
+        } catch (Exception e) {
+            throw new StorageException("Unable to inspect stored file", e);
         }
     }
 }

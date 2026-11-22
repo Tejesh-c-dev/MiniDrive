@@ -13,5 +13,6 @@ public enum UploadSessionStatus {
     INITIATED,
     COMPLETED,
     ABORTED,
-    EXPIRED
+    EXPIRED,
+    CLEANING
 }

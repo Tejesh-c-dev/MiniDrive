@@ -85,12 +85,13 @@ public class FolderController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(
+    public ResponseEntity<?> delete(
             @PathVariable UUID id,
             Authentication authentication) {
 
-        folderService.delete(authentication, id);
-
-        return ResponseEntity.noContent().build();
+        FolderService.DeletionResult result = folderService.delete(authentication, id);
+        if (result.complete()) return ResponseEntity.noContent().build();
+        return ResponseEntity.accepted().header("Retry-After", "30")
+                .body(result);
     }
 }

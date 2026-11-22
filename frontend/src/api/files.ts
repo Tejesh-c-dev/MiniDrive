@@ -8,11 +8,13 @@
  * - GET /api/files[?folderId=<uuid>] -> FileResponse[]
  * - GET /api/files/{id}/download     -> binary stream (attachment)
  * - PATCH /api/files/{id}            -> FileMetadataResponse
+ * - DELETE /api/files/{id}           -> 204 when cleanup completes, 202 when queued
  */
 import { apiClient } from '@/api/client';
 import { toApiError } from '@/api/errors';
 import type { AxiosProgressEvent } from 'axios';
 import type { FileSummary } from '@/types/drive';
+import type { DeletionResult } from '@/types/api';
 
 /**
  * Mirrors com.minidrive.dto.file.FileUploadResponse. Sentinel REST
@@ -38,6 +40,20 @@ export interface FileUploadResponse {
   currentVersion: number;
 }
 
+/** Permanently delete a file and its stored versions through the backend lifecycle. */
+export async function deleteFile(id: string): Promise<DeletionResult> {
+  try {
+    const response = await apiClient.delete<DeletionResult>(`/api/files/${id}`);
+    // A completed deletion returns 204 with no body. 202 includes the durable
+    // cleanup job result and must not be presented as completed yet.
+    return response.status === 202
+      ? response.data
+      : { complete: true };
+  } catch (error: unknown) {
+    throw toApiError(error);
+  }
+}
+
 /** List files, optionally scoped to a folder (omit folderId for drive root). */
 export async function listFiles(folderId?: string): Promise<FileSummary[]> {
   try {
@@ -48,6 +64,16 @@ export async function listFiles(folderId?: string): Promise<FileSummary[]> {
   } catch (error: unknown) {
     throw toApiError(error);
   }
+}
+
+export interface SharedFileSummary {
+  id: string; name: string; contentType: string; sizeBytes: number;
+  updatedAt: string; currentVersion: number; ownerName: string;
+  role: 'VIEWER' | 'EDITOR';
+}
+export async function listSharedFiles(): Promise<SharedFileSummary[]> {
+  try { const { data } = await apiClient.get<SharedFileSummary[]>('/api/files/shared-with-me'); return data; }
+  catch (error: unknown) { throw toApiError(error); }
 }
 
 /**
